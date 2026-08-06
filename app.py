@@ -48,7 +48,11 @@ st.subheader("WBS ağacı")
 def agac_yazdir(gorev, seviye=0):
     girinti = "&nbsp;&nbsp;&nbsp;&nbsp;" * seviye
     etiket = "[İş paketi]" if gorev.yaprak_mi() else "[Faz]"
-    st.markdown(f"{girinti}**{gorev.wbs_kodu}** — {gorev.isim} &nbsp;`{etiket}`", unsafe_allow_html=True)
+    butce_metni = f"{gorev.toplam_butce():,.0f} TL"
+    st.markdown(
+        f"{girinti}**{gorev.wbs_kodu}** — {gorev.isim} &nbsp;`{etiket}` &nbsp;— {butce_metni}",
+        unsafe_allow_html=True
+    )
     for cocuk in gorev.alt_gorevler:
         agac_yazdir(cocuk, seviye + 1)
 

@@ -106,7 +106,28 @@ def test_en_riskli_gorevler_siralama():
     assert [g.wbs_kodu for g in siralı] == ["R1", "R3", "R2"]
 
 
-def test_kaynak_dengele_cakisma_cozer():
+def test_yuzde_yuz_kurali_roll_up():
+    """
+    WBS'in '%100 Kuralı': bir fazın toplam bütçesi, kendi başına
+    girilmez — altındaki tüm iş paketlerinin bütçe toplamı olmalı.
+    """
+    proje = WorkPackage("0.0", "Proje")
+    faz = WorkPackage("1.0", "Sistem Mühendisliği")
+    proje.alt_gorev_ekle(faz)
+
+    ip1 = WorkPackage("1.1", "Gereksinim analizi", butce=30_000)
+    ip2 = WorkPackage("1.2", "Sistem tasarımı", butce=20_000)
+    faz.alt_gorev_ekle(ip1)
+    faz.alt_gorev_ekle(ip2)
+
+    # Fazın kendi 'butce' alanı hiç girilmedi (varsayılan 0),
+    # ama toplam_butce() otomatik olarak 30.000 + 20.000 = 50.000 dönmeli.
+    assert faz.toplam_butce() == 50_000
+    assert proje.toplam_butce() == 50_000  # kök de aynı toplamı yansıtmalı
+    assert ip1.toplam_butce() == 30_000    # yaprak, kendi değerini döner
+
+
+
     """
     5. Adımdaki kaynak dengeleme senaryosu: B ve C aynı kaynağa (Zeynep K.)
     atanmışsa, kritik olan (C, float=0) önce çalışmalı, B onun ardına kaymalı.

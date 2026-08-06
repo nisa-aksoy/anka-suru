@@ -69,6 +69,17 @@ class WorkPackage:
         for cocuk in self.alt_gorevler:
             yield from cocuk.tum_alt_agaci_dolas()
 
+    def toplam_butce(self) -> float:
+        """
+        WBS'in '%100 Kuralı'nın gerçek uygulaması:
+        Bir fazın bütçesi kendi başına girilmez, altındaki TÜM iş
+        paketlerinin bütçe toplamından türetilir (roll-up).
+        Yaprak (iş paketi) ise zaten kendi butce'sini döner.
+        """
+        if self.yaprak_mi():
+            return self.butce
+        return sum(cocuk.toplam_butce() for cocuk in self.alt_gorevler)
+
     # ---------------- PERT ----------------
     def beklenen_sure(self) -> float:
         return (self.iyimser + 4 * self.olasi + self.kotumser) / 6
