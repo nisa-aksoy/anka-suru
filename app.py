@@ -14,7 +14,7 @@ dosyalarda (anka_suru_core.py, proje_verisi.py) zaten var.
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from proje_verisi import get_proje
+from proje_verisi import get_proje, agaci_kur, hesapla
 from anka_suru_core import en_riskli_gorevler
 
 st.set_page_config(page_title="ANKA-SÜRÜ PMO Paneli", layout="wide")
@@ -92,7 +92,75 @@ st.plotly_chart(fig_gantt, use_container_width=True)
 
 st.divider()
 
-# --- Kaynak dengeleme tablosu ---
+# --- What-If senaryo analizi ---
+# Mantık: agaci_kur() ile TAZE bir ikinci ağaç kurulur (proje2, yapraklar2),
+# sadece o taze ağaçtaki hedef görevin PERT değerleri değiştirilip hesapla()
+# çalıştırılır. Yukarıdaki 'proje' ve 'yapraklar' (baseline) hiç dokunulmaz.
+st.subheader("What-If senaryo analizi")
+st.caption(
+    "Bir iş paketinin süre tahminini değiştirip projenin geri kalanını "
+    "nasıl etkileyeceğini gör. Yukarıdaki baseline plana dokunulmaz."
+)
+
+gorev_secenekleri = {f"{g.wbs_kodu} — {g.isim}": g.wbs_kodu
+                      for g in yapraklar if g.beklenen_sure() > 0}
+
+with st.form("whatif_formu"):
+    secilen_etiket = st.selectbox("Hangi iş paketini değiştirmek istiyorsun?",
+                                   list(gorev_secenekleri.keys()))
+    secilen_kodu = gorev_secenekleri[secilen_etiket]
+    mevcut = next(g for g in yapraklar if g.wbs_kodu == secilen_kodu)
+
+    col_x, col_y, col_z = st.columns(3)
+    yeni_iyimser = col_x.number_input("İyimser (gün)", min_value=0.0,
+                                       value=float(mevcut.iyimser), step=0.5)
+    yeni_olasi = col_y.number_input("Olası (gün)", min_value=0.0,
+                                     value=float(mevcut.olasi), step=0.5)
+    yeni_kotumser = col_z.number_input("Kötümser (gün)", min_value=0.0,
+                                        value=float(mevcut.kotumser), step=0.5)
+
+    calistir = st.form_submit_button("Senaryoyu çalıştır")
+
+if calistir:
+    # Taze ağaç — orijinal 'proje'/'yapraklar' listesine hiç dokunmuyoruz
+    proje2, yapraklar2 = agaci_kur()
+    hedef2 = next(g for g in yapraklar2 if g.wbs_kodu == secilen_kodu)
+    hedef2.iyimser = yeni_iyimser
+    hedef2.olasi = yeni_olasi
+    hedef2.kotumser = yeni_kotumser
+    hesapla(yapraklar2)
+
+    st.session_state.whatif_sonuc = {
+        "gorev": secilen_etiket,
+        "eski_sure": round(proje_suresi, 1),
+        "yeni_sure": round(max(g.ef for g in yapraklar2), 1),
+        "eski_kritik": sorted(g.wbs_kodu for g in yapraklar if g.kritik_mi()),
+        "yeni_kritik": sorted(g.wbs_kodu for g in yapraklar2 if g.kritik_mi()),
+    }
+
+if "whatif_sonuc" in st.session_state:
+    sonuc = st.session_state.whatif_sonuc
+    fark = sonuc["yeni_sure"] - sonuc["eski_sure"]
+
+    st.markdown(f"**Senaryo:** {sonuc['gorev']} değiştirildi")
+    c1, c2 = st.columns(2)
+    c1.metric("Baseline proje süresi", f"{sonuc['eski_sure']} gün")
+    c2.metric("What-If proje süresi", f"{sonuc['yeni_sure']} gün", delta=f"{fark:+.1f} gün")
+
+    girenler = set(sonuc["yeni_kritik"]) - set(sonuc["eski_kritik"])
+    cikanlar = set(sonuc["eski_kritik"]) - set(sonuc["yeni_kritik"])
+    if girenler:
+        st.write(f"🔴 Kritik yola yeni girenler: {', '.join(sorted(girenler))}")
+    if cikanlar:
+        st.write(f"🟢 Kritik yoldan çıkanlar: {', '.join(sorted(cikanlar))}")
+    if not girenler and not cikanlar:
+        st.caption("Kritik yol değişmedi.")
+
+    if st.button("What-If sonucunu temizle"):
+        del st.session_state.whatif_sonuc
+        st.rerun()
+
+st.divider()
 st.subheader("Kaynak dengeleme sonrası gerçek takvim")
 df_kaynak = pd.DataFrame([{
     "WBS": g.wbs_kodu, "İş paketi": g.isim, "Kaynak": g.atanan_kaynak,

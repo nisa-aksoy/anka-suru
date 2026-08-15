@@ -13,10 +13,17 @@ fonksiyonunu çağırıp sonucu ekrana basacak.
 from anka_suru_core import WorkPackage, kaynak_dengele, en_riskli_gorevler
 
 
-def get_proje():
+def agaci_kur():
     """
-    Tam ANKA-SÜRÜ WBS ağacını kurar, CPM + kaynak dengelemeyi çalıştırır,
-    ve (proje_koku, tum_yaprak_gorevler) ikilisini döner.
+    SADECE ANKA-SÜRÜ WBS ağacını kurar: fazlar, iş paketleri, CPM
+    bağımlılık zinciri (once_gelir). HİÇBİR hesaplama yapmaz —
+    dönen görevlerin es/ef/ls/lf alanları hepsi None'dır.
+
+    Bu fonksiyon her çağrıldığında TAMAMEN YENİ WorkPackage nesneleri
+    yaratır. What-If senaryoları için bu önemli: orijinal ağaca hiç
+    dokunmadan, sıfırdan taze bir ikinci ağaç kurmamızı sağlar.
+
+    Döner: (proje_koku, tum_yaprak_gorevler)
     """
     proje = WorkPackage("0.0", "ANKA-SÜRÜ Otonom Sürü İHA Sistemi")
 
@@ -115,16 +122,42 @@ def get_proje():
     # --- Tüm yaprak (iş paketi) görevleri topla ---
     yapraklar = [g for g in proje.tum_alt_agaci_dolas() if g.yaprak_mi()]
 
-    # --- CPM: ileri/geri geçiş ---
+    return proje, yapraklar
+
+
+def hesapla(yapraklar):
+    """
+    Taze (henüz hesaplanmamış) bir yaprak listesi alır; CPM ileri/geri
+    geçişini ve kaynak dengelemeyi bu liste üzerinde çalıştırır.
+
+    Girdideki WorkPackage nesnelerini YERİNDE (in-place) günceller —
+    yani es/ef/ls/lf/fiili_baslangic/fiili_bitis alanlarını doldurur.
+    Aynı 'yapraklar' referansını geriye döner (zincirleme çağrı kolaylığı için).
+
+    NOT: Bu fonksiyon zaten hesaplanmış (es dolu) bir listeye tekrar
+    çağrılırsa hiçbir şey yapmaz — çünkü ileri_gecis()/geri_gecis()
+    'if self.es is not None: return' ile kendini korur. Bu yüzden
+    What-If senaryosunda MUTLAKA agaci_kur()'dan taze bir liste almalıyız.
+    """
     for g in yapraklar:
         g.ileri_gecis()
     proje_bitis = max(g.ef for g in yapraklar)
     for g in yapraklar:
         g.geri_gecis(proje_bitis)
 
-    # --- Kaynak dengeleme ---
     kaynak_dengele(yapraklar)
 
+    return yapraklar
+
+
+def get_proje():
+    """
+    Geriye dönük uyumluluk için: agaci_kur() + hesapla()'yı sırayla
+    çağırır. app.py ve mevcut testler bu fonksiyonu değişmeden kullanmaya
+    devam edebilir — davranış birebir aynı.
+    """
+    proje, yapraklar = agaci_kur()
+    hesapla(yapraklar)
     return proje, yapraklar
 
 
