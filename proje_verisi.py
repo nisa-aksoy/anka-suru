@@ -11,6 +11,7 @@ fonksiyonunu çağırıp sonucu ekrana basacak.
 """
 
 from anka_suru_core import WorkPackage, kaynak_dengele, en_riskli_gorevler
+import statistics
 
 
 def agaci_kur():
@@ -159,6 +160,61 @@ def get_proje():
     proje, yapraklar = agaci_kur()
     hesapla(yapraklar)
     return proje, yapraklar
+
+
+def monte_carlo_calistir(iterasyon_sayisi=1000):
+    """
+    Monte Carlo şema (schedule) risk simülasyonu.
+
+    Her iterasyonda:
+      1. agaci_kur() ile TAZE bir ağaç kurulur (önceki iterasyonu etkilemez)
+      2. Her görevin süresi rastgele_sure() ile örneklenir (sabit
+         beklenen_sure() DEĞİL — CPM'in ileri/geri geçişine bunu
+         sure_hesapla parametresiyle söylüyoruz)
+      3. O iterasyondaki proje bitiş günü (en son görevin EF'i) kaydedilir
+
+    Kasıtlı olarak kaynak dengeleme (kaynak_dengele) ÇALIŞTIRILMAZ —
+    burada sadece süre belirsizliğinin ağ/CPM yapısı üzerinden proje
+    bitişine etkisini ölçüyoruz; kaynak kısıtları ayrı bir konu
+    (ileride Critical Chain modülünde ele alınacak).
+
+    Döner: dict {
+        "sonuclar": [iterasyon1_bitis, iterasyon2_bitis, ...],  # ham liste, histogram için
+        "p50": ..., "p80": ..., "p90": ...,
+        "iterasyon_sayisi": ...
+    }
+    """
+    sonuclar = []
+
+    for _ in range(iterasyon_sayisi):
+        _proje2, yapraklar2 = agaci_kur()
+
+        # SADECE ileri geçiş çalıştırılıyor: proje bitiş günü (max EF) bunun
+        # tek başına yeterli olduğu bir çıktı. Geri geçiş (LS/LF/float/kritik
+        # yol) şu an hiçbir yerde kullanılmıyor (Criticality Index kapsam
+        # dışı bırakıldı) — bu yüzden burada çalıştırmıyoruz. Not: eğer
+        # ileride geri geçiş de eklenirse, süresi görev başına TEK SEFER
+        # örneklenip hem ileri hem geri geçişte AYNI değer kullanılmalı
+        # (iki ayrı rastgele_sure() çağrısı ileri/geri arasında tutarsızlık
+        # yaratır — bu doğrulama sürecinde tespit edildi).
+        for g in yapraklar2:
+            g.ileri_gecis(sure_hesapla=lambda gorev: gorev.rastgele_sure())
+        proje_bitis = max(g.ef for g in yapraklar2)
+
+        sonuclar.append(proje_bitis)
+
+    sonuclar.sort()
+    # statistics.quantiles(n=100) veriyi 100 eşit parçaya böler;
+    # p50/p80/p90 == 50./80./90. yüzdelik dilim sınırları
+    yuzdelikler = statistics.quantiles(sonuclar, n=100, method="inclusive")
+
+    return {
+        "sonuclar": sonuclar,
+        "p50": round(yuzdelikler[49], 1),   # 50. yüzdelik (index 49, çünkü 0-tabanlı)
+        "p80": round(yuzdelikler[79], 1),
+        "p90": round(yuzdelikler[89], 1),
+        "iterasyon_sayisi": iterasyon_sayisi,
+    }
 
 
 if __name__ == "__main__":

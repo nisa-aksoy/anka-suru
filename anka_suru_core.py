@@ -15,6 +15,8 @@ Streamlit arayüzü (bir sonraki adım) bu dosyayı import edip
 sadece EKRANA BASMAKLA ilgilenecek — hesaplama mantığının tamamı burada.
 """
 
+import random
+
 class WorkPackage:
     def __init__(self, wbs_kodu: str, isim: str,
                  iyimser: float = 0, olasi: float = 0, kotumser: float = 0,
@@ -87,32 +89,57 @@ class WorkPackage:
     def standart_sapma(self) -> float:
         return (self.kotumser - self.iyimser) / 6
 
+    def rastgele_sure(self) -> float:
+        """
+        Monte Carlo simülasyonu için: beklenen_sure()'ün aksine SABİT bir
+        ortalama değil, üçgen dağılımdan TEK BİR RASTGELE ÖRNEK döner.
+
+        Aynı (iyimser, olasi, kotumser) üçlüsünü kullanır — yeni veri
+        girişi gerekmez. iyimser=olasi=kotumser olan görevlerde (ör. sadece
+        takvime giren süresi-0 riskler) random.triangular otomatik olarak
+        her seferinde o sabit değeri döner, hata vermez.
+        """
+        return random.triangular(self.iyimser, self.olasi, self.kotumser)
+
     # ---------------- CPM ----------------
     def once_gelir(self, sonraki: "WorkPackage"):
         sonraki.onceki_gorevler.append(self)
         self.sonraki_gorevler.append(sonraki)
 
-    def ileri_gecis(self):
+    def ileri_gecis(self, sure_hesapla=None):
+        """
+        sure_hesapla: görev süresini nasıl hesaplayacağını belirten
+        opsiyonel bir fonksiyon (bir WorkPackage alır, bir sayı döner).
+        Verilmezse (normal/deterministik kullanım — get_proje, What-If)
+        varsayılan olarak beklenen_sure() (sabit PERT ortalaması) kullanılır.
+        Monte Carlo simülasyonunda bunun yerine rastgele_sure() verilir.
+        """
+        if sure_hesapla is None:
+            sure_hesapla = lambda g: g.beklenen_sure()
+
         if self.es is not None:
             return
         if not self.onceki_gorevler:
             self.es = 0
         else:
             for onceki in self.onceki_gorevler:
-                onceki.ileri_gecis()
+                onceki.ileri_gecis(sure_hesapla)
             self.es = max(o.ef for o in self.onceki_gorevler)
-        self.ef = self.es + self.beklenen_sure()
+        self.ef = self.es + sure_hesapla(self)
 
-    def geri_gecis(self, proje_bitis: float = None):
+    def geri_gecis(self, proje_bitis: float = None, sure_hesapla=None):
+        if sure_hesapla is None:
+            sure_hesapla = lambda g: g.beklenen_sure()
+
         if self.lf is not None:
             return
         if not self.sonraki_gorevler:
             self.lf = proje_bitis
         else:
             for sonraki in self.sonraki_gorevler:
-                sonraki.geri_gecis(proje_bitis)
+                sonraki.geri_gecis(proje_bitis, sure_hesapla)
             self.lf = min(s.ls for s in self.sonraki_gorevler)
-        self.ls = self.lf - self.beklenen_sure()
+        self.ls = self.lf - sure_hesapla(self)
 
     def float_hesapla(self) -> float:
         if self.es is None or self.ls is None:

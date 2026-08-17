@@ -36,6 +36,8 @@ birleştiren bir portföy çalışmasıdır.
 | **EVM** (Kazanılmış Değer Yönetimi) | Bütçe/takvim performansını ölçer, bitiş maliyetini öngörür | SPI = EV/PV, CPI = EV/AC, EAC = BAC/CPI |
 | **Kaynak Kısıtlı Zamanlama** | Aynı kaynağın çakışan atamalarını çözer | Float önceliğiyle sıralama |
 | **Risk Matrisi** | Riskleri olasılık × etki ile skorlar | Risk Skoru = Olasılık × Etki |
+| **What-If Senaryo Analizi** | Bir görevin süre tahmini değişirse projenin nasıl etkileneceğini, baseline'a dokunmadan gösterir | Taze WBS ağacı + hedef görevin PERT değerleri değiştirilip CPM yeniden çalıştırılır |
+| **Monte Carlo Şema Risk Analizi** | Süre belirsizliğinin proje bitişine etkisini binlerce simülasyonla ölçer | Her iterasyonda üçgen dağılımdan örneklenen süre + CPM, P50/P80/P90 yüzdelik dilimleri |
 
 ### Ekran Görüntüleri
 
@@ -51,6 +53,12 @@ birleştiren bir portföy çalışmasıdır.
 **Olasılık × Etki risk skorlaması ve risk matrisi**
 ![Risk matrisi](assets/risk_matrisi.png)
 
+**What-If senaryo analizi — baseline ile senaryo süresi karşılaştırması**
+![What-If senaryosu](assets/what_if.png)
+
+**Monte Carlo şema risk analizi — proje bitiş tarihi dağılımı ve P50/P80/P90**
+![Monte Carlo](assets/monte_carlo.png)
+
 ### Mimari
 
 Proje, **hesaplama mantığı** ile **veri** ve **arayüzü** birbirinden ayıran katmanlı bir
@@ -64,6 +72,11 @@ app.py                → Streamlit arayüzü; SADECE görselleştirme yapar, he
 
 Bu ayrım, "separation of concerns" (kaygıların ayrılması) prensibinin somut bir uygulamasıdır:
 veri veya arayüz değişse bile, çekirdek hesaplama mantığına dokunulmaz.
+
+`proje_verisi.py` içinde ağaç kurulumu (`agaci_kur()`) ile hesaplama (`hesapla()`)
+de kendi içinde ayrılmıştır. Bu sayede What-If senaryoları ve Monte Carlo simülasyonu,
+orijinal (baseline) plana hiç dokunmadan, her seferinde temiz/taze bir proje ağacı
+üzerinde çalışabilir.
 
 ### Kurulum ve Çalıştırma
 
@@ -114,6 +127,8 @@ independently, as a portfolio piece.
 | **EVM** (Earned Value Management) | Measures cost/schedule performance, forecasts final cost | SPI = EV/PV, CPI = EV/AC, EAC = BAC/CPI |
 | **Resource-Constrained Scheduling** | Resolves overlapping assignments for the same resource | Float-based priority ordering |
 | **Risk Matrix** | Scores risks via probability × impact | Risk Score = Probability × Impact |
+| **What-If Scenario Analysis** | Shows how the project is affected if a task's duration estimate changes, without touching the baseline | Fresh WBS tree + target task's PERT values changed, CPM re-run |
+| **Monte Carlo Schedule Risk Analysis** | Measures how duration uncertainty affects project completion via thousands of simulations | Per-iteration triangular-distribution sampling + CPM, P50/P80/P90 percentiles |
 
 ### Architecture
 
@@ -128,6 +143,11 @@ app.py                → Streamlit UI; ONLY visualizes, never calculates
 
 This separation of concerns means the core calculation engine never needs to change,
 even if the data or the interface does.
+
+Within `proje_verisi.py`, tree construction (`agaci_kur()`) is itself separated from
+calculation (`hesapla()`). This lets both What-If scenarios and the Monte Carlo
+simulation run on a clean, freshly-built project tree each time, without ever
+touching the original baseline plan.
 
 ### Setup & Run
 

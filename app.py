@@ -14,7 +14,7 @@ dosyalarda (anka_suru_core.py, proje_verisi.py) zaten var.
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from proje_verisi import get_proje, agaci_kur, hesapla
+from proje_verisi import get_proje, agaci_kur, hesapla, monte_carlo_calistir
 from anka_suru_core import en_riskli_gorevler
 
 st.set_page_config(page_title="ANKA-SÜRÜ PMO Paneli", layout="wide")
@@ -159,6 +159,54 @@ if "whatif_sonuc" in st.session_state:
     if st.button("What-If sonucunu temizle"):
         del st.session_state.whatif_sonuc
         st.rerun()
+
+st.divider()
+
+# --- Monte Carlo şema (schedule) risk analizi ---
+# Mantık: monte_carlo_calistir() her iterasyonda TAZE bir ağaç kurup
+# (agaci_kur) her görevin süresini rastgele_sure() ile örnekliyor ve
+# CPM'i o rastgele sürelerle çalıştırıyor. Kaynak dengeleme BİLEREK
+# dahil edilmiyor — burada sadece süre belirsizliğinin ağ/CPM yapısı
+# üzerinden proje bitişine etkisini ölçüyoruz.
+st.subheader("Monte Carlo şema risk analizi")
+st.caption(
+    "Görev sürelerindeki belirsizliği binlerce kez örnekleyip, projenin "
+    "hangi tarihte bitme ihtimalinin ne olduğunu (P50/P80/P90) gösterir. "
+    "Kaynak kısıtları bu analize dahil edilmez."
+)
+
+iterasyon_sayisi = st.slider("İterasyon sayısı", min_value=100, max_value=5000,
+                              value=1000, step=100)
+
+if st.button("Monte Carlo simülasyonunu çalıştır"):
+    with st.spinner(f"{iterasyon_sayisi} iterasyon çalıştırılıyor..."):
+        st.session_state.mc_sonuc = monte_carlo_calistir(iterasyon_sayisi)
+
+if "mc_sonuc" in st.session_state:
+    mc = st.session_state.mc_sonuc
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Baseline (deterministik CPM)", f"{proje_suresi:.1f} gün")
+    c2.metric("P50", f"{mc['p50']} gün")
+    c3.metric("P80", f"{mc['p80']} gün")
+    c4.metric("P90", f"{mc['p90']} gün")
+
+    df_mc = pd.DataFrame({"Proje bitiş günü": mc["sonuclar"]})
+    fig_mc = px.histogram(df_mc, x="Proje bitiş günü", nbins=40,
+                           title=f"{mc['iterasyon_sayisi']} iterasyonluk proje bitiş dağılımı")
+    fig_mc.add_vline(x=mc["p50"], line_dash="dash", line_color="#4a7c59",
+                      annotation_text="P50", annotation_position="top")
+    fig_mc.add_vline(x=mc["p80"], line_dash="dash", line_color="#a66a1e",
+                      annotation_text="P80", annotation_position="top")
+    fig_mc.add_vline(x=mc["p90"], line_dash="dash", line_color="#993c1d",
+                      annotation_text="P90", annotation_position="top")
+    st.plotly_chart(fig_mc, use_container_width=True)
+
+    st.caption(
+        f"Deterministik CPM {proje_suresi:.1f} gün diyor, ama bu tek bir "
+        f"'ortalama senaryo'. Simülasyon %90 ihtimalle projenin "
+        f"{mc['p90']} güne kadar biteceğini gösteriyor."
+    )
 
 st.divider()
 st.subheader("Kaynak dengeleme sonrası gerçek takvim")

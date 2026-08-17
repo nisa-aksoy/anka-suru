@@ -156,3 +156,44 @@ def test_yuzde_yuz_kurali_roll_up():
     assert c.fiili_bitis == 12
     assert b.fiili_baslangic == 12
     assert b.fiili_bitis == 15
+
+
+def test_rastgele_sure_sinirlar_icinde():
+    """
+    rastgele_sure()'ün her örneği [iyimser, kotumser] aralığında olmalı —
+    üçgen dağılımın matematiksel garantisi budur. 500 örnekle test ediyoruz
+    ki sınırların dışına taşan tek bir değer bile olmasın.
+    """
+    gorev = WorkPackage("X", "Örnek görev", iyimser=4, olasi=6, kotumser=14)
+    for _ in range(500):
+        s = gorev.rastgele_sure()
+        assert 4 <= s <= 14
+
+
+def test_rastgele_sure_ortalamasi_beklenen_sureye_yakin():
+    """
+    İstatistiksel tutarlılık kontrolü: çok sayıda rastgele_sure() örneğinin
+    ortalaması, aynı üçlüden hesaplanan beklenen_sure()'e (PERT ortalaması)
+    yakınsamalı. Rastgelelik olduğu için '==' değil, geniş bir tolerans
+    (+-%10) ile kontrol ediyoruz — amaç dağılımın merkezinin doğru
+    yerde olduğunu doğrulamak, tam eşitlik değil.
+    """
+    gorev = WorkPackage("X", "Örnek görev", iyimser=4, olasi=6, kotumser=14)
+    beklenen = gorev.beklenen_sure()  # (4 + 4*6 + 14) / 6 = 7.0
+
+    N = 5000
+    ortalama = sum(gorev.rastgele_sure() for _ in range(N)) / N
+    assert abs(ortalama - beklenen) < beklenen * 0.10
+
+
+def test_rastgele_sure_sabit_gorevde_degismiyor():
+    """
+    iyimser=olasi=kotumser olan görevler (ör. süresi-0 risk kayıtları,
+    ya da belirsizliği olmayan sabit süreli görevler) için rastgele_sure()
+    her zaman o sabit değeri dönmeli — dağılımın genişliği 0 olduğunda
+    örnekleme rastgelelik katmamalı.
+    """
+    sabit_gorev = WorkPackage("R", "Sabit süreli görev",
+                               iyimser=5, olasi=5, kotumser=5)
+    for _ in range(50):
+        assert sabit_gorev.rastgele_sure() == 5
