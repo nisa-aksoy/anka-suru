@@ -227,6 +227,32 @@ def en_riskli_gorevler(proje_koku: WorkPackage, adet: int = 5) -> list:
     return riskliler[:adet]
 
 
+def s_egrisi_pv(yapraklar: list, proje_suresi: float = None) -> list:
+    """
+    S-Curve'ün PV (planlanan değer) eğrisi: proje başından (gün 0)
+    proje sonuna kadar HER GÜN için, o güne kadar planlanan kümülatif
+    bütçeyi hesaplar.
+
+    Yeni bir hesaplama mantığı DEĞİL — zaten var olan
+    planlanan_deger(bugun) metodunu (tek bir gün için tanımlı) sadece
+    bir döngüyle her gün için çağırıp topluyor. EV/AC'nin aksine PV
+    tamamen plana dayalı olduğu için (gerçek ilerleme verisi
+    gerektirmediği için) her gün için hesaplanabiliyor.
+
+    Döner: [(gun, kumulatif_pv), (gun, kumulatif_pv), ...] — gün 0'dan
+    proje_suresi'ne kadar, 1'er gün aralıklarla.
+    """
+    if proje_suresi is None:
+        proje_suresi = max(g.ef for g in yapraklar)
+    proje_suresi = int(round(proje_suresi))
+
+    egri = []
+    for gun in range(proje_suresi + 1):
+        kumulatif_pv = sum(g.planlanan_deger(gun) for g in yapraklar)
+        egri.append((gun, kumulatif_pv))
+    return egri
+
+
 if __name__ == "__main__":
     # Hızlı bir doğrulama: 6 modül birlikte tutarlı çalışıyor mu?
     a = WorkPackage("A", "Gereksinim analizi", iyimser=3, olasi=5, kotumser=8, butce=20000)

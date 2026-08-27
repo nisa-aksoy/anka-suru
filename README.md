@@ -38,6 +38,7 @@ birleştiren bir portföy çalışmasıdır.
 | **Risk Matrisi** | Riskleri olasılık × etki ile skorlar | Risk Skoru = Olasılık × Etki |
 | **What-If Senaryo Analizi** | Bir görevin süre tahmini değişirse projenin nasıl etkileneceğini, baseline'a dokunmadan gösterir | Taze WBS ağacı + hedef görevin PERT değerleri değiştirilip CPM yeniden çalıştırılır |
 | **Monte Carlo Şema Risk Analizi** | Süre belirsizliğinin proje bitişine etkisini binlerce simülasyonla ölçer | Her iterasyonda üçgen dağılımdan örneklenen süre + CPM, P50/P80/P90 yüzdelik dilimleri |
+| **S-Curve (PV/EV/AC)** | Bütçe/ilerleme performansını proje boyunca kümülatif olarak görselleştirir | PV her gün için hesaplanır (plana dayalı); EV/AC yalnızca girilen kontrol noktalarında bilinir |
 
 ### Ekran Görüntüleri
 
@@ -58,6 +59,9 @@ birleştiren bir portföy çalışmasıdır.
 
 **Monte Carlo şema risk analizi — proje bitiş tarihi dağılımı ve P50/P80/P90**
 ![Monte Carlo](assets/monte_carlo.png)
+
+**S-Curve — kümülatif PV/EV/AC bütçe eğrisi**
+![S-Curve](assets/s_curve.png)
 
 ### Mimari
 
@@ -92,7 +96,7 @@ streamlit run app.py
 - **Composite Pattern:** WBS hiyerarşisi, klasik bir nesne yönelimli tasarım deseniyle modellendi.
 - **Streamlit `session_state`:** Kullanıcının girdiği EVM kontrol noktaları, sayfa yeniden
   çalıştığında kaybolmadan biriktirildi.
-- **Plotly ile interaktif görselleştirme:** Gantt şeması, risk scatter plot ve EAC trend grafiği.
+- **Plotly ile interaktif görselleştirme:** Gantt şeması, risk scatter plot, Monte Carlo dağılım histogramı ve S-Curve (PV/EV/AC) dahil EAC trend grafikleri.
 
 ---
 
@@ -129,6 +133,7 @@ independently, as a portfolio piece.
 | **Risk Matrix** | Scores risks via probability × impact | Risk Score = Probability × Impact |
 | **What-If Scenario Analysis** | Shows how the project is affected if a task's duration estimate changes, without touching the baseline | Fresh WBS tree + target task's PERT values changed, CPM re-run |
 | **Monte Carlo Schedule Risk Analysis** | Measures how duration uncertainty affects project completion via thousands of simulations | Per-iteration triangular-distribution sampling + CPM, P50/P80/P90 percentiles |
+| **S-Curve (PV/EV/AC)** | Visualizes cumulative budget/progress performance across the project timeline | PV computed for every day (plan-based); EV/AC known only at entered checkpoints |
 
 ### Architecture
 
@@ -162,7 +167,7 @@ streamlit run app.py
   solved via tasks recursively triggering each other.
 - **Composite Pattern:** The WBS hierarchy is modeled using a classic OOP design pattern.
 - **Streamlit `session_state`:** User-entered EVM checkpoints persist across page reruns.
-- **Interactive visualization with Plotly:** Gantt chart, risk scatter plot, and EAC trend line.
+- **Interactive visualization with Plotly:** Gantt chart, risk scatter plot, Monte Carlo distribution histogram, and EAC trend charts including the S-Curve (PV/EV/AC).
 
 ---
 

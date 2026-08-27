@@ -14,8 +14,9 @@ dosyalarda (anka_suru_core.py, proje_verisi.py) zaten var.
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from proje_verisi import get_proje, agaci_kur, hesapla, monte_carlo_calistir
-from anka_suru_core import en_riskli_gorevler
+from anka_suru_core import en_riskli_gorevler, s_egrisi_pv
 
 st.set_page_config(page_title="ANKA-SÜRÜ PMO Paneli", layout="wide")
 st.title("ANKA-SÜRÜ — Otonom Sürü İHA Projesi PMO Kontrol Paneli")
@@ -233,18 +234,55 @@ st.dataframe(df_evm, use_container_width=True, hide_index=True)
 
 st.divider()
 
-# --- EAC / Bütçe trend takibi ---
-st.subheader("EAC / bütçe trend takibi — kontrol noktaları")
-st.caption(
-    "Her kontrol noktasında (ör. her hafta), o güne kadarki genel ilerlemeyi "
-    "ve harcamayı gir. Sistem CPI ve EAC'yi otomatik hesaplayıp aşağıdaki "
-    "trend grafiğine ekleyecek."
-)
-
-# session_state: sayfa her yeniden çalıştığında (ör. slider hareket ettirince)
-# eklenen kontrol noktalarının SİLİNMEMESİ için kullanılıyor.
+# --- session_state: kontrol noktalarının sayfa rerun'larında kaybolmaması için ---
 if "kontrol_noktalari" not in st.session_state:
     st.session_state.kontrol_noktalari = []
+
+# --- S-Curve: PV / EV / AC ---
+# PV: s_egrisi_pv() ile proje başından sonuna kadar HER GÜN için hesaplanır
+# (tamamen plana dayalı, gerçek ilerleme verisi gerekmez — bu yüzden kontrol
+# noktası girilmese bile PV eğrisi her zaman çizilebilir).
+# EV/AC: bunlar gerçek dünyadaki ilerlemeye bağlı, sadece kullanıcının
+# girdiği kontrol noktalarında bilinir. Aradaki günler için veri YOK —
+# bu yüzden noktaları düz çizgiyle değil, KESİKLİ çizgiyle birleştiriyoruz;
+# bu, "aradaki değerler gerçek ölçüm değil, sadece görsel bağlantı" mesajını
+# grafikte de taşımak için.
+st.subheader("S-Curve — PV / EV / AC bütçe eğrisi")
+st.caption(
+    "PV (planlanan değer) her gün için hesaplanır. EV ve AC ise SADECE "
+    "aşağıda gireceğin kontrol noktalarında bilinir — aralarındaki kesikli "
+    "çizgi gerçek ölçüm değil, yalnızca görsel bir bağlantıdır."
+)
+
+pv_egrisi = s_egrisi_pv(yapraklar, proje_suresi)
+df_pv = pd.DataFrame(pv_egrisi, columns=["Gün", "PV"])
+
+fig_scurve = go.Figure()
+fig_scurve.add_scatter(x=df_pv["Gün"], y=df_pv["PV"], mode="lines",
+                        name="PV — Planlanan Değer",
+                        line=dict(color="#4a7c59", width=2))
+
+if st.session_state.kontrol_noktalari:
+    df_kn = pd.DataFrame(st.session_state.kontrol_noktalari).sort_values("Gün")
+    fig_scurve.add_scatter(x=df_kn["Gün"], y=df_kn["EV"], mode="lines+markers",
+                            name="EV — Kazanılan Değer (kontrol noktaları)",
+                            line=dict(color="#2b6ca3", dash="dot"))
+    fig_scurve.add_scatter(x=df_kn["Gün"], y=df_kn["AC"], mode="lines+markers",
+                            name="AC — Gerçekleşen Maliyet (kontrol noktaları)",
+                            line=dict(color="#993c1d", dash="dot"))
+
+fig_scurve.update_layout(xaxis_title="Proje günü", yaxis_title="Kümülatif TL")
+st.plotly_chart(fig_scurve, use_container_width=True)
+
+st.divider()
+
+# --- Kontrol noktası girişi + EAC trend ---
+st.subheader("Kontrol noktaları ve EAC trend takibi")
+st.caption(
+    "Her kontrol noktasında (ör. her hafta), o güne kadarki genel ilerlemeyi "
+    "ve harcamayı gir. Sistem CPI ve EAC'yi otomatik hesaplayıp yukarıdaki "
+    "S-Curve'e ve aşağıdaki EAC trend grafiğine ekleyecek."
+)
 
 with st.form("kontrol_noktasi_formu", clear_on_submit=True):
     col_a, col_b, col_c = st.columns(3)
@@ -265,6 +303,7 @@ if eklendi:
         "CPI": round(cpi, 2) if cpi else None,
         "EAC": round(eac, 0),
     })
+    st.rerun()
 
 if st.session_state.kontrol_noktalari:
     df_trend = pd.DataFrame(st.session_state.kontrol_noktalari).sort_values("Gün")
