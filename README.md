@@ -40,6 +40,7 @@ birleştiren bir portföy çalışmasıdır.
 | **Monte Carlo Şema Risk Analizi** | Süre belirsizliğinin proje bitişine etkisini binlerce simülasyonla ölçer | Her iterasyonda üçgen dağılımdan örneklenen süre + CPM, P50/P80/P90 yüzdelik dilimleri |
 | **S-Curve (PV/EV/AC)** | Bütçe/ilerleme performansını proje boyunca kümülatif olarak görselleştirir | PV her gün için hesaplanır (plana dayalı); EV/AC yalnızca girilen kontrol noktalarında bilinir |
 | **Critical Chain** | Gizli güvenlik paylarını kırpıp gerçek darboğaz zincirini (bağımlılık + kaynak) bulur, tek bir proje tamponuyla korur | Kırpılmış süre (PERT 'olasi') + kaynak-kısıtlı CPM, geriye doğru darboğaz izleme, tampon = kırpılan payın yarısı |
+| **Karar Destek Sistemi (DSS)** | Yukarıdaki modüllerin sonuçlarını birlikte yorumlayıp kural tabanlı, açıklanabilir karar kartları ve genel bir proje durum ışığı üretir | Eşik tabanlı kurallar (ör. CPI/SPI < 0.90/0.80) + modüller arası kesişim analizi (ör. kritiğe yakın + yüksek riskli görev kesişimi); yapay zeka/kara kutu tahmin kullanılmaz |
 
 ### Ekran Görüntüleri
 
@@ -67,14 +68,18 @@ birleştiren bir portföy çalışmasıdır.
 **Critical Chain analizi — gerçek darboğaz zinciri ve proje tamponu**
 ![Critical Chain](assets/critical_chain.png)
 
+**Karar Destek Paneli — genel proje durum ışığı ve gerekçeli karar kartları**
+![Karar Destek Paneli](assets/karar_destek.png)
+
 ### Mimari
 
-Proje, **hesaplama mantığı** ile **veri** ve **arayüzü** birbirinden ayıran katmanlı bir
-mimariyle kuruldu:
+Proje, **hesaplama mantığı** ile **veri**, **karar yorumu** ve **arayüzü** birbirinden ayıran
+katmanlı bir mimariyle kuruldu:
 
 ```
 anka_suru_core.py   → WorkPackage sınıfı: tüm PMO matematiği burada
 proje_verisi.py      → ANKA-SÜRÜ'nün gerçek WBS ağacı, bu sınıfı kullanarak kurulur
+karar_destek.py       → Mevcut modüllerin sonuçlarını yorumlayan karar destek katmanı
 app.py                → Streamlit arayüzü; SADECE görselleştirme yapar, hesaplama yapmaz
 ```
 
@@ -85,6 +90,15 @@ veri veya arayüz değişse bile, çekirdek hesaplama mantığına dokunulmaz.
 de kendi içinde ayrılmıştır. Bu sayede What-If senaryoları ve Monte Carlo simülasyonu,
 orijinal (baseline) plana hiç dokunmadan, her seferinde temiz/taze bir proje ağacı
 üzerinde çalışabilir.
+
+`karar_destek.py`, klasik DSS (Karar Destek Sistemi) mimarisindeki üçüncü bileşeni temsil
+eder — veri yönetimi (`proje_verisi.py`) ve model yönetiminin (`anka_suru_core.py`) üzerine
+eklenen karar/yorum katmanı. Bu dosya, diğer ikisinden **hiçbir şey import etmez**; sadece
+kendisine verilen, zaten hesaplanmış sonuçları (WorkPackage nesneleri, Monte Carlo ve
+Critical Chain çıktıları) okuyup yorumlar. Bu sayede hesaplama motoruna hiç dokunmadan,
+mevcut modüllerin tek başına göremediği bileşik durumları (ör. hem kritiğe yakın hem yüksek
+riskli bir görev) yakalayabilir — ama nihai kararı (hangi eylemin seçileceğini) kasıtlı
+olarak insana bırakır.
 
 ### Kurulum ve Çalıştırma
 
@@ -105,6 +119,10 @@ streamlit run app.py
   (`sure_hesapla` parametresi) dışarıdan alacak şekilde tasarlandı — aynı hesaplama motoru,
   hiç kopyalanmadan hem deterministik (`beklenen_sure`), hem rastgele (Monte Carlo için
   `rastgele_sure`), hem kırpılmış (Critical Chain için `kirpik_sure`) modda çalışabiliyor.
+- **Kural Tabanlı Karar Destek:** Yapay zeka veya kara kutu tahmin kullanılmadı — her karar
+  kartı, eşik tabanlı kurallara (ör. CPI/SPI < 0.90/0.80) ve modüller arası kesişim analizine
+  dayanıyor; hangi kararın hangi sayıya dayandığı her kartın gerekçesinde açıkça yazıyor
+  (açıklanabilirlik).
 
 ---
 
@@ -143,15 +161,17 @@ independently, as a portfolio piece.
 | **Monte Carlo Schedule Risk Analysis** | Measures how duration uncertainty affects project completion via thousands of simulations | Per-iteration triangular-distribution sampling + CPM, P50/P80/P90 percentiles |
 | **S-Curve (PV/EV/AC)** | Visualizes cumulative budget/progress performance across the project timeline | PV computed for every day (plan-based); EV/AC known only at entered checkpoints |
 | **Critical Chain** | Clips hidden safety margins and finds the true bottleneck chain (dependency + resource), protected by a single project buffer | Clipped duration (PERT 'most likely'), resource-constrained CPM, backward bottleneck trace, buffer = half the clipped time |
+| **Decision Support System (DSS)** | Interprets the results of the modules above together and produces rule-based, explainable decision cards plus an overall project status indicator | Threshold-based rules (e.g. CPI/SPI < 0.90/0.80) + cross-module intersection analysis (e.g. near-critical + high-risk task overlap); no machine learning or black-box prediction |
 
 ### Architecture
 
-The project follows a layered architecture that separates **calculation logic** from
-**data** and the **interface**:
+The project follows a layered architecture that separates **calculation logic**, **data**,
+**decision interpretation**, and the **interface**:
 
 ```
 anka_suru_core.py   → WorkPackage class: all PMO math lives here
 proje_verisi.py      → ANKA-SÜRÜ's actual WBS tree, built using this class
+karar_destek.py       → Decision support layer that interprets the existing modules' results
 app.py                → Streamlit UI; ONLY visualizes, never calculates
 ```
 
@@ -162,6 +182,15 @@ Within `proje_verisi.py`, tree construction (`agaci_kur()`) is itself separated 
 calculation (`hesapla()`). This lets both What-If scenarios and the Monte Carlo
 simulation run on a clean, freshly-built project tree each time, without ever
 touching the original baseline plan.
+
+`karar_destek.py` represents the third component of the classical DSS (Decision Support
+System) architecture — the decision/dialog layer built on top of data management
+(`proje_verisi.py`) and model management (`anka_suru_core.py`). This file imports **nothing**
+from the other two; it only reads and interprets the results it's given (WorkPackage objects,
+Monte Carlo and Critical Chain outputs), which are already computed. This lets it surface
+compound conditions no single existing module could see on its own (e.g. a task that is both
+near-critical and high-risk) without ever touching the calculation engine — but it
+deliberately leaves the final choice of action to the human.
 
 ### Setup & Run
 
@@ -181,6 +210,9 @@ streamlit run app.py
   calculation method (`sure_hesapla` parameter) as an argument — the same engine runs in
   deterministic mode (`beklenen_sure`), random mode for Monte Carlo (`rastgele_sure`), and
   clipped mode for Critical Chain (`kirpik_sure`) without any code duplication.
+- **Rule-Based Decision Support:** No machine learning or black-box prediction — every
+  decision card is driven by threshold-based rules and cross-module intersection analysis;
+  each card's rationale explicitly states which number it's based on (explainability).
 
 ---
 
@@ -190,6 +222,7 @@ streamlit run app.py
 anka-suru/
 ├── anka_suru_core.py     # Çekirdek hesaplama mantığı / Core calculation engine
 ├── proje_verisi.py       # WBS ağacı ve örnek veri / WBS tree and sample data
+├── karar_destek.py       # Karar destek katmanı / Decision support layer
 ├── app.py                # Streamlit dashboard
 ├── test_anka_suru.py     # Otomatik testler / Automated tests
 ├── assets/                # Ekran görüntüleri / Screenshots

@@ -12,6 +12,12 @@ Bu dosya, elle hesaplayıp doğruladığımız senaryoları (2., 3., 4. ve 6. Ad
 """
 
 from anka_suru_core import WorkPackage, kaynak_dengele, en_riskli_gorevler, kritik_zincir_belirle, tampon_hesapla
+from proje_verisi import get_proje
+from karar_destek import (
+    takvim_karti_uret, butce_karti_uret, risk_karti_uret,
+    bilesik_risk_karti_uret, teslim_tarihi_karti_uret, kaynak_karti_uret,
+    genel_durum_belirle, karar_destek_calistir,
+)
 
 
 def test_cpm_kritik_yol():
@@ -127,7 +133,7 @@ def test_yuzde_yuz_kurali_roll_up():
     assert ip1.toplam_butce() == 30_000    # yaprak, kendi değerini döner
 
 
-
+def test_kaynak_dengele_basit_senaryo():
     """
     5. Adımdaki kaynak dengeleme senaryosu: B ve C aynı kaynağa (Zeynep K.)
     atanmışsa, kritik olan (C, float=0) önce çalışmalı, B onun ardına kaymalı.
@@ -292,3 +298,217 @@ def test_tampon_hesapla_elle_hesapla_ile_eslesiyor():
     # y: beklenen=(2+12+10)/6=4.0, kirpik=3 -> fark=1.0
     # toplam=2.0, tampon=1.0
     assert tampon_hesapla([x, y]) == 1.0
+
+
+# ==================== Karar Destek Sistemi (DSS) testleri ====================
+
+def test_takvim_karti_uret_esige_gore_durum_belirliyor():
+    """
+    2. Adımdaki A-B-C-D-E ağı (test_cpm_kritik_yol'daki ile birebir aynı):
+    kritik yol A-C-D-E, B'nin float'ı 4 gün. Varsayılan eşikle (2 gün)
+    B 'kritiğe yakın' sayılmamalı (Yeşil); eşik 5 güne çıkarılınca B
+    kritiğe yakın sayılmalı (Sarı).
+    """
+    a = WorkPackage("A", "Gereksinim analizi", iyimser=5, olasi=5, kotumser=5)
+    b = WorkPackage("B", "Alt sistem tasarımı", iyimser=3, olasi=3, kotumser=3)
+    c = WorkPackage("C", "Yazılım kodlama", iyimser=7, olasi=7, kotumser=7)
+    d = WorkPackage("D", "Entegrasyon", iyimser=4, olasi=4, kotumser=4)
+    e = WorkPackage("E", "Test", iyimser=3, olasi=3, kotumser=3)
+
+    a.once_gelir(b)
+    a.once_gelir(c)
+    b.once_gelir(d)
+    c.once_gelir(d)
+    d.once_gelir(e)
+
+    gorevler = [a, b, c, d, e]
+    for g in gorevler:
+        g.ileri_gecis()
+    proje_bitis = max(g.ef for g in gorevler)
+    for g in gorevler:
+        g.geri_gecis(proje_bitis)
+
+    kartlar_varsayilan = takvim_karti_uret(gorevler)
+    assert kartlar_varsayilan[0]["durum"] == "Yeşil"
+
+    kartlar_genis_esik = takvim_karti_uret(gorevler, kritige_yakin_esik=5)
+    assert kartlar_genis_esik[0]["durum"] == "Sarı"
+    assert "B" in kartlar_genis_esik[0]["gerekce"]
+
+
+def test_butce_karti_uret_esikleri_dogru_uyguluyor():
+    """
+    CPI/SPI eşiklerinin (<0.90 Sarı, <0.80 Kırmızı) doğru uygulandığını
+    ve ikisinden HANGİSİ daha kötüyse onun kazandığını (worst-of)
+    kontrol eder.
+    """
+    kart = butce_karti_uret(100_000, proje_cpi=0.95, proje_spi=0.95, proje_eac=100_000)
+    assert kart[0]["durum"] == "Yeşil"
+
+    kart = butce_karti_uret(100_000, proje_cpi=0.95, proje_spi=0.85, proje_eac=105_000)
+    assert kart[0]["durum"] == "Sarı"
+
+    kart = butce_karti_uret(100_000, proje_cpi=0.70, proje_spi=0.95, proje_eac=140_000)
+    assert kart[0]["durum"] == "Kırmızı"
+
+
+def test_butce_karti_uret_veri_yoksa_yesil_ama_belirtiyor():
+    """
+    CPI ve SPI ikisi de None ise (henüz harcama/ilerleme yok), kart
+    Yeşil döner ama gerekçede bunun 'veri yok' anlamına geldiği açıkça
+    yazmalı -- yanlış bir güvence vermemeli.
+    """
+    kart = butce_karti_uret(100_000, proje_cpi=None, proje_spi=None, proje_eac=100_000)
+    assert kart[0]["durum"] == "Yeşil"
+    assert "veri yok" in kart[0]["gerekce"]
+
+
+def test_risk_karti_uret_seviyeye_gore_durum_belirliyor():
+    """
+    6. Adımdaki risk senaryosu (R1 Yüksek, R2/R3 Orta) tekrar kullanılıyor.
+    En az bir Yüksek varsa Kırmızı; sadece Orta varsa Sarı; risk yoksa Yeşil.
+    """
+    r1 = WorkPackage("R1", "Sensör ihracat izni", olasilik=4, etki=5)
+    r2 = WorkPackage("R2", "Mühendis istifası", olasilik=2, etki=4)
+    r3 = WorkPackage("R3", "Hava koşulları", olasilik=5, etki=2)
+
+    assert risk_karti_uret([r1, r2, r3])[0]["durum"] == "Kırmızı"
+    assert risk_karti_uret([r2, r3])[0]["durum"] == "Sarı"
+    assert risk_karti_uret([])[0]["durum"] == "Yeşil"
+
+
+def test_bilesik_risk_karti_uret_kesisimi_buluyor():
+    """
+    Kritik (float=0) bir görev aynı zamanda Yüksek risk taşıyorsa,
+    bileşik risk kartı bunu Kırmızı olarak yakalamalı -- CPM veya Risk
+    Matrisi tek başına bunu göremezdi.
+    """
+    a = WorkPackage("A", "Gereksinim analizi", iyimser=5, olasi=5, kotumser=5)
+    b = WorkPackage("B", "Alt sistem tasarımı", iyimser=3, olasi=3, kotumser=3)
+    c = WorkPackage("C", "Yazılım kodlama", iyimser=7, olasi=7, kotumser=7,
+                     olasilik=4, etki=5)  # kritik VE yüksek riskli
+    d = WorkPackage("D", "Entegrasyon", iyimser=4, olasi=4, kotumser=4)
+
+    a.once_gelir(b)
+    a.once_gelir(c)
+    b.once_gelir(d)
+    c.once_gelir(d)
+
+    gorevler = [a, b, c, d]
+    for g in gorevler:
+        g.ileri_gecis()
+    proje_bitis = max(g.ef for g in gorevler)
+    for g in gorevler:
+        g.geri_gecis(proje_bitis)
+
+    kart = bilesik_risk_karti_uret(gorevler, riskliler=[c])
+    assert kart[0]["durum"] == "Kırmızı"
+    assert "C" in kart[0]["gerekce"]
+
+
+def test_bilesik_risk_karti_uret_kesisim_yoksa_yesil():
+    """
+    Riskli görev, kritiğe yakın OLMAYAN (bolluğu yeterli) bir görevse,
+    kesişim olmamalı -- Yeşil dönmeli. Aynı A-B-C-D-E ağı, bu sefer risk
+    B'ye (float=4, varsayılan esik=2'nin üstünde) veriliyor.
+    """
+    a = WorkPackage("A", "Gereksinim analizi", iyimser=5, olasi=5, kotumser=5)
+    b = WorkPackage("B", "Alt sistem tasarımı", iyimser=3, olasi=3, kotumser=3,
+                     olasilik=4, etki=5)
+    c = WorkPackage("C", "Yazılım kodlama", iyimser=7, olasi=7, kotumser=7)
+    d = WorkPackage("D", "Entegrasyon", iyimser=4, olasi=4, kotumser=4)
+    e = WorkPackage("E", "Test", iyimser=3, olasi=3, kotumser=3)
+
+    a.once_gelir(b)
+    a.once_gelir(c)
+    b.once_gelir(d)
+    c.once_gelir(d)
+    d.once_gelir(e)
+
+    gorevler = [a, b, c, d, e]
+    for g in gorevler:
+        g.ileri_gecis()
+    proje_bitis = max(g.ef for g in gorevler)
+    for g in gorevler:
+        g.geri_gecis(proje_bitis)
+
+    kart = bilesik_risk_karti_uret(gorevler, riskliler=[b])
+    assert kart[0]["durum"] == "Yeşil"
+
+
+def test_teslim_tarihi_karti_uret_bantlari_dogru():
+    """P50/P80/P90 bantlarına göre üç durumun da doğru üretildiğini kontrol eder."""
+    mc_sonuc = {"p50": 50, "p80": 55, "p90": 60, "iterasyon_sayisi": 1000}
+
+    assert teslim_tarihi_karti_uret(mc_sonuc, hedef_gun=65)[0]["durum"] == "Yeşil"
+    assert teslim_tarihi_karti_uret(mc_sonuc, hedef_gun=52)[0]["durum"] == "Sarı"
+    assert teslim_tarihi_karti_uret(mc_sonuc, hedef_gun=45)[0]["durum"] == "Kırmızı"
+
+
+def test_teslim_tarihi_karti_uret_veri_yoksa_kart_uretmiyor():
+    """mc_sonuc veya hedef_gun verilmemişse (None) kart üretilmemeli."""
+    mc_sonuc = {"p50": 50, "p80": 55, "p90": 60, "iterasyon_sayisi": 1000}
+    assert teslim_tarihi_karti_uret(None, hedef_gun=60) == []
+    assert teslim_tarihi_karti_uret(mc_sonuc, hedef_gun=None) == []
+
+
+def test_kaynak_karti_uret_ayni_kaynagin_birden_fazla_gorevini_yakaliyor():
+    """
+    Kritik zincirde aynı kaynağa 2+ görev atanmışsa Sarı dönmeli, tek tek
+    farklı kaynaklara atanmışsa Yeşil dönmeli.
+    """
+    a = WorkPackage("A", "Gereksinim analizi")
+    b = WorkPackage("B", "Tasarım", atanan_kaynak="Zeynep K.")
+    c = WorkPackage("C", "Kodlama", atanan_kaynak="Zeynep K.")
+    d = WorkPackage("D", "Entegrasyon", atanan_kaynak="Can B.")
+
+    cc_sonuc_darbogazli = {"kritik_zincir": [a, b, c, d], "proje_tamponu": 1.0}
+    kart = kaynak_karti_uret(cc_sonuc_darbogazli)
+    assert kart[0]["durum"] == "Sarı"
+    assert "Zeynep K." in kart[0]["gerekce"]
+
+    cc_sonuc_dengeli = {"kritik_zincir": [a, b, d], "proje_tamponu": 1.0}
+    assert kaynak_karti_uret(cc_sonuc_dengeli)[0]["durum"] == "Yeşil"
+
+
+def test_kaynak_karti_uret_veri_yoksa_kart_uretmiyor():
+    """cc_sonuc verilmemişse (None) kart üretilmemeli."""
+    assert kaynak_karti_uret(None) == []
+
+
+def test_genel_durum_belirle_en_kotuyu_seciyor():
+    """
+    Worst-of mantığı: kartlar arasında en az bir Kırmızı varsa genel
+    durum Kırmızı, yoksa en az bir Sarı varsa Sarı, hepsi Yeşilse Yeşil.
+    Ağırlıklı ortalama YOK -- tek bir kırmızı diğerleri arasında
+    gizlenmemeli.
+    """
+    assert genel_durum_belirle([{"durum": "Yeşil"}, {"durum": "Kırmızı"}, {"durum": "Sarı"}]) == "Kırmızı"
+    assert genel_durum_belirle([{"durum": "Yeşil"}, {"durum": "Sarı"}]) == "Sarı"
+    assert genel_durum_belirle([{"durum": "Yeşil"}, {"durum": "Yeşil"}]) == "Yeşil"
+    assert genel_durum_belirle([]) == "Yeşil"
+
+
+def test_karar_destek_calistir_gercek_projeyle_uctan_uca_calisiyor():
+    """
+    Uçtan uca entegrasyon testi: gerçek ANKA-SÜRÜ verisiyle
+    karar_destek_calistir() hatasız çalışmalı. mc_sonuc/cc_sonuc/hedef_gun
+    verilmediği için 'Teslim Tarihi' ve 'Kaynak' kartları ÜRETİLMEMELİ --
+    diğer dördü (Takvim, Bütçe, Risk, Bileşik Risk) her zaman üretilir.
+    """
+    proje, yapraklar = get_proje()
+    riskliler = en_riskli_gorevler(proje, adet=10)
+    toplam_butce = sum(g.butce for g in yapraklar)
+    toplam_ev = sum(g.kazanilan_deger() for g in yapraklar)
+    toplam_pv = sum(g.planlanan_deger(15) for g in yapraklar)
+    toplam_ac = sum(g.gerceklesen_maliyet for g in yapraklar)
+    proje_cpi = toplam_ev / toplam_ac if toplam_ac else None
+    proje_spi = toplam_ev / toplam_pv if toplam_pv else None
+    proje_eac = toplam_butce / proje_cpi if proje_cpi else toplam_butce
+
+    sonuc = karar_destek_calistir(yapraklar, riskliler, toplam_butce,
+                                   proje_cpi, proje_spi, proje_eac)
+
+    assert sonuc["genel_durum"] in ("Yeşil", "Sarı", "Kırmızı")
+    kategoriler = {k["kategori"] for k in sonuc["kartlar"]}
+    assert kategoriler == {"Takvim", "Bütçe", "Risk", "Bileşik Risk"}

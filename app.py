@@ -4,7 +4,7 @@ STREAMLIT DASHBOARD (app.py)
 
 Bu dosya HİÇBİR hesaplama yapmaz — sadece proje_verisi.py'den gelen
 hazır sonuçları ekrana (web sayfasına) döker. Tüm "akıl" önceki
-dosyalarda (anka_suru_core.py, proje_verisi.py) zaten var.
+dosyalarda (anka_suru_core.py, proje_verisi.py, karar_destek.py) zaten var.
 
 Çalıştırmak için (terminalde, bu dosyanın olduğu klasörde):
     pip install streamlit pandas
@@ -17,6 +17,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from proje_verisi import get_proje, agaci_kur, hesapla, monte_carlo_calistir, critical_chain_calistir
 from anka_suru_core import en_riskli_gorevler, s_egrisi_pv
+from karar_destek import karar_destek_calistir
 
 st.set_page_config(page_title="ANKA-SÜRÜ PMO Paneli", layout="wide")
 st.title("ANKA-SÜRÜ — Otonom Sürü İHA Projesi PMO Kontrol Paneli")
@@ -387,3 +388,50 @@ fig_risk = px.scatter(
 )
 fig_risk.update_traces(textposition="top center")
 st.plotly_chart(fig_risk, use_container_width=True)
+
+st.divider()
+
+# --- Karar Destek Paneli ---
+# Mantık: karar_destek_calistir(), yukarıdaki modüllerin (CPM, EVM, Risk
+# Matrisi, Monte Carlo, Critical Chain) ZATEN HESAPLANMIŞ sonuçlarını
+# okuyup, aralarındaki bağlantıları (ör. hem kritiğe yakın hem yüksek
+# riskli görevler) yorumlar. Burada hiçbir yeni hesaplama yapılmıyor --
+# karar_destek.py hiçbir hesaplama fonksiyonu içermiyor, sadece yorumluyor.
+# Monte Carlo ve Critical Chain sonuçları (mc_sonuc/cc_sonuc) kullanıcı
+# ilgili butona basmadıysa session_state'te olmayabilir -- bu durumda
+# karar_destek_calistir() ilgili kartları sessizce atlar, hata vermez.
+st.subheader("Karar Destek Paneli")
+st.caption(
+    "Yukarıdaki modüllerin sonuçlarını birlikte okuyup, kural tabanlı ve "
+    "açıklanabilir bir özet çıkarır. Hiçbir yeni hesaplama yapmaz -- sadece "
+    "yorumlar. Hangi kararın hangi sayıya dayandığı her kartın gerekçesinde yazıyor."
+)
+
+hedef_gun = st.number_input(
+    "Hedef teslim günü (Monte Carlo ile karşılaştırmak için)",
+    min_value=0, value=int(round(proje_suresi)), step=1,
+)
+
+mc_sonuc_mevcut = st.session_state.get("mc_sonuc")
+cc_sonuc_mevcut = st.session_state.get("cc_sonuc")
+
+if mc_sonuc_mevcut is None:
+    st.caption("ℹ️ 'Teslim Tarihi' kartı için yukarıdan Monte Carlo simülasyonunu çalıştır.")
+if cc_sonuc_mevcut is None:
+    st.caption("ℹ️ 'Kaynak' kartı için yukarıdan Critical Chain analizini çalıştır.")
+
+karar = karar_destek_calistir(
+    yapraklar, riskliler, toplam_butce, proje_cpi, proje_spi, proje_eac,
+    mc_sonuc=mc_sonuc_mevcut, cc_sonuc=cc_sonuc_mevcut, hedef_gun=hedef_gun,
+)
+
+durum_gosterge = {"Yeşil": st.success, "Sarı": st.warning, "Kırmızı": st.error}
+durum_gosterge[karar["genel_durum"]](f"**Genel proje durumu: {karar['genel_durum']}**")
+
+for kart in karar["kartlar"]:
+    mesaj = (
+        f"**{kart['kategori']} — {kart['baslik']}**\n\n"
+        f"{kart['gerekce']}\n\n"
+        f"*Kaynak modül: {kart['kaynak_modul']}*"
+    )
+    durum_gosterge[kart["durum"]](mesaj)
