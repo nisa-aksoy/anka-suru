@@ -10,7 +10,8 @@ Streamlit arayüzü (bir sonraki adım) SADECE bu dosyadaki get_proje()
 fonksiyonunu çağırıp sonucu ekrana basacak.
 """
 
-from anka_suru_core import WorkPackage, kaynak_dengele, en_riskli_gorevler
+from anka_suru_core import (WorkPackage, kaynak_dengele, en_riskli_gorevler,
+                             kritik_zincir_belirle, tampon_hesapla)
 import statistics
 
 
@@ -214,6 +215,49 @@ def monte_carlo_calistir(iterasyon_sayisi=1000):
         "p80": round(yuzdelikler[79], 1),
         "p90": round(yuzdelikler[89], 1),
         "iterasyon_sayisi": iterasyon_sayisi,
+    }
+
+
+def critical_chain_calistir():
+    """
+    Critical Chain analizi: kırpılmış sürelerle (kirpik_sure) CPM'i ve
+    kaynak dengelemeyi çalıştırır, gerçek darboğaz zincirini bulur ve
+    proje tamponunu hesaplar.
+
+    Monte Carlo'nun tam tersi bir tercih yapıyor: Monte Carlo kaynak
+    dengelemeyi BİLEREK dışarıda bırakıyordu (sadece ağ/CPM belirsizliğini
+    ölçmek için); burada ise kaynak kısıtı analizin MERKEZİNDE — bu yüzden
+    kaynak_dengele() burada mutlaka çalıştırılıyor.
+
+    Döner: dict {
+        "yapraklar": ...,          # kırpılmış+kaynak dengeli fiili takvim
+        "kritik_zincir": [...],    # gerçek darboğaz zinciri (WorkPackage listesi)
+        "proje_suresi_kirpik": ...,   # tampon EKLENMEDEN, kırpılmış süreyle biten gün
+        "proje_tamponu": ...,          # kritik zincirden kırpılan payın yarısı
+        "proje_suresi_tamponlu": ...,  # kırpık süre + tampon (Critical Chain'in nihai tahmini)
+    }
+    """
+    _proje, yapraklar = agaci_kur()
+
+    for g in yapraklar:
+        g.ileri_gecis(sure_hesapla=lambda gorev: gorev.kirpik_sure())
+    proje_bitis_kirpik = max(g.ef for g in yapraklar)
+    for g in yapraklar:
+        g.geri_gecis(proje_bitis_kirpik, sure_hesapla=lambda gorev: gorev.kirpik_sure())
+
+    kaynak_dengele(yapraklar, sure_hesapla=lambda gorev: gorev.kirpik_sure())
+
+    kritik_zincir = kritik_zincir_belirle(yapraklar)
+    tampon = tampon_hesapla(kritik_zincir)
+
+    proje_suresi_kirpik = max(g.fiili_bitis for g in yapraklar)
+
+    return {
+        "yapraklar": yapraklar,
+        "kritik_zincir": kritik_zincir,
+        "proje_suresi_kirpik": round(proje_suresi_kirpik, 1),
+        "proje_tamponu": tampon,
+        "proje_suresi_tamponlu": round(proje_suresi_kirpik + tampon, 1),
     }
 
 

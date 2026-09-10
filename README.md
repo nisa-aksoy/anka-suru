@@ -34,11 +34,12 @@ birleştiren bir portföy çalışmasıdır.
 | **CPM** (Kritik Yol Metodu) | En erken bitiş tarihini ve kritik görevleri bulur | ES/EF (ileri geçiş), LS/LF (geri geçiş), Float = LS−ES |
 | **PERT** (Olasılıksal Süre Tahmini) | Belirsiz süreleri istatistiksel olarak modeller | TE = (O+4M+P)/6, σ = (P−O)/6 |
 | **EVM** (Kazanılmış Değer Yönetimi) | Bütçe/takvim performansını ölçer, bitiş maliyetini öngörür | SPI = EV/PV, CPI = EV/AC, EAC = BAC/CPI |
-| **Kaynak Kısıtlı Zamanlama** | Aynı kaynağın çakışan atamalarını çözer | Float önceliğiyle sıralama |
+| **Kaynak Kısıtlı Zamanlama** | Aynı kaynağın çakışan atamalarını, HEM bağımlılık HEM kaynak müsaitliğini gözeterek çözer | Kaynak-kısıtlı ileri geçiş (serial schedule generation), float önceliğiyle |
 | **Risk Matrisi** | Riskleri olasılık × etki ile skorlar | Risk Skoru = Olasılık × Etki |
 | **What-If Senaryo Analizi** | Bir görevin süre tahmini değişirse projenin nasıl etkileneceğini, baseline'a dokunmadan gösterir | Taze WBS ağacı + hedef görevin PERT değerleri değiştirilip CPM yeniden çalıştırılır |
 | **Monte Carlo Şema Risk Analizi** | Süre belirsizliğinin proje bitişine etkisini binlerce simülasyonla ölçer | Her iterasyonda üçgen dağılımdan örneklenen süre + CPM, P50/P80/P90 yüzdelik dilimleri |
 | **S-Curve (PV/EV/AC)** | Bütçe/ilerleme performansını proje boyunca kümülatif olarak görselleştirir | PV her gün için hesaplanır (plana dayalı); EV/AC yalnızca girilen kontrol noktalarında bilinir |
+| **Critical Chain** | Gizli güvenlik paylarını kırpıp gerçek darboğaz zincirini (bağımlılık + kaynak) bulur, tek bir proje tamponuyla korur | Kırpılmış süre (PERT 'olasi') + kaynak-kısıtlı CPM, geriye doğru darboğaz izleme, tampon = kırpılan payın yarısı |
 
 ### Ekran Görüntüleri
 
@@ -62,6 +63,9 @@ birleştiren bir portföy çalışmasıdır.
 
 **S-Curve — kümülatif PV/EV/AC bütçe eğrisi**
 ![S-Curve](assets/s_curve.png)
+
+**Critical Chain analizi — gerçek darboğaz zinciri ve proje tamponu**
+![Critical Chain](assets/critical_chain.png)
 
 ### Mimari
 
@@ -97,6 +101,10 @@ streamlit run app.py
 - **Streamlit `session_state`:** Kullanıcının girdiği EVM kontrol noktaları, sayfa yeniden
   çalıştığında kaybolmadan biriktirildi.
 - **Plotly ile interaktif görselleştirme:** Gantt şeması, risk scatter plot, Monte Carlo dağılım histogramı ve S-Curve (PV/EV/AC) dahil EAC trend grafikleri.
+- **Strategy Pattern:** CPM ve kaynak dengeleme fonksiyonları, süre hesaplama yöntemini
+  (`sure_hesapla` parametresi) dışarıdan alacak şekilde tasarlandı — aynı hesaplama motoru,
+  hiç kopyalanmadan hem deterministik (`beklenen_sure`), hem rastgele (Monte Carlo için
+  `rastgele_sure`), hem kırpılmış (Critical Chain için `kirpik_sure`) modda çalışabiliyor.
 
 ---
 
@@ -129,11 +137,12 @@ independently, as a portfolio piece.
 | **CPM** (Critical Path Method) | Finds the earliest finish date and critical tasks | ES/EF (forward pass), LS/LF (backward pass), Float = LS−ES |
 | **PERT** (Program Evaluation and Review Technique) | Models uncertain durations statistically | TE = (O+4M+P)/6, σ = (P−O)/6 |
 | **EVM** (Earned Value Management) | Measures cost/schedule performance, forecasts final cost | SPI = EV/PV, CPI = EV/AC, EAC = BAC/CPI |
-| **Resource-Constrained Scheduling** | Resolves overlapping assignments for the same resource | Float-based priority ordering |
+| **Resource-Constrained Scheduling** | Resolves overlapping assignments for the same resource, accounting for BOTH dependency AND resource availability | Resource-constrained forward pass (serial schedule generation), float-based priority |
 | **Risk Matrix** | Scores risks via probability × impact | Risk Score = Probability × Impact |
 | **What-If Scenario Analysis** | Shows how the project is affected if a task's duration estimate changes, without touching the baseline | Fresh WBS tree + target task's PERT values changed, CPM re-run |
 | **Monte Carlo Schedule Risk Analysis** | Measures how duration uncertainty affects project completion via thousands of simulations | Per-iteration triangular-distribution sampling + CPM, P50/P80/P90 percentiles |
 | **S-Curve (PV/EV/AC)** | Visualizes cumulative budget/progress performance across the project timeline | PV computed for every day (plan-based); EV/AC known only at entered checkpoints |
+| **Critical Chain** | Clips hidden safety margins and finds the true bottleneck chain (dependency + resource), protected by a single project buffer | Clipped duration (PERT 'most likely'), resource-constrained CPM, backward bottleneck trace, buffer = half the clipped time |
 
 ### Architecture
 
@@ -168,6 +177,10 @@ streamlit run app.py
 - **Composite Pattern:** The WBS hierarchy is modeled using a classic OOP design pattern.
 - **Streamlit `session_state`:** User-entered EVM checkpoints persist across page reruns.
 - **Interactive visualization with Plotly:** Gantt chart, risk scatter plot, Monte Carlo distribution histogram, and EAC trend charts including the S-Curve (PV/EV/AC).
+- **Strategy Pattern:** The CPM and resource-leveling functions accept the duration
+  calculation method (`sure_hesapla` parameter) as an argument — the same engine runs in
+  deterministic mode (`beklenen_sure`), random mode for Monte Carlo (`rastgele_sure`), and
+  clipped mode for Critical Chain (`kirpik_sure`) without any code duplication.
 
 ---
 

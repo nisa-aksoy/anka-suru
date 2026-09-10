@@ -15,7 +15,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from proje_verisi import get_proje, agaci_kur, hesapla, monte_carlo_calistir
+from proje_verisi import get_proje, agaci_kur, hesapla, monte_carlo_calistir, critical_chain_calistir
 from anka_suru_core import en_riskli_gorevler, s_egrisi_pv
 
 st.set_page_config(page_title="ANKA-SÜRÜ PMO Paneli", layout="wide")
@@ -220,6 +220,50 @@ if len(df_kaynak) > 0:
     st.dataframe(df_kaynak, use_container_width=True, hide_index=True)
 else:
     st.caption("Henüz belirli bir kaynağa atanmış görev yok.")
+
+st.divider()
+
+# --- Critical Chain analizi ---
+# Mantık: kirpik_sure() (PERT'in 'olasi' değeri, güvenlik payı taşımıyor)
+# ile CPM + kaynak dengeleme çalıştırılır, ardından kritik_zincir_belirle()
+# ile hem bağımlılık hem kaynak çakışmasını hesaba katan GERÇEK darboğaz
+# zinciri bulunur. Her görevden kırpılan güvenlik payının yarısı, zincirin
+# sonuna TEK bir proje tamponu olarak konur (tampon_hesapla).
+st.subheader("Critical Chain analizi")
+st.caption(
+    "Her görevden 'gizli' güvenlik payını kırpıp (PERT'in en olası "
+    "değeri), gerçek darboğaz zincirini (hem bağımlılık hem kaynak "
+    "çakışması dahil) bulur ve kırpılan payın yarısını zincirin sonuna "
+    "tek bir proje tamponu olarak koyar."
+)
+
+if st.button("Critical Chain analizini çalıştır"):
+    st.session_state.cc_sonuc = critical_chain_calistir()
+
+if "cc_sonuc" in st.session_state:
+    cc = st.session_state.cc_sonuc
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Baseline (deterministik CPM)", f"{proje_suresi:.1f} gün")
+    c2.metric("Kırpılmış süre + tampon", f"{cc['proje_suresi_tamponlu']} gün")
+    c3.metric("Proje tamponu", f"{cc['proje_tamponu']} gün")
+
+    st.markdown("**Kritik Zincir** (hem bağımlılık hem kaynak çakışması dahil)")
+    df_zincir = pd.DataFrame([{
+        "WBS": g.wbs_kodu, "İş paketi": g.isim,
+        "Kaynak": g.atanan_kaynak or g.sorumlu or "-",
+        "Fiili başlangıç": round(g.fiili_baslangic, 1),
+        "Fiili bitiş": round(g.fiili_bitis, 1),
+    } for g in cc["kritik_zincir"]])
+    st.dataframe(df_zincir, use_container_width=True, hide_index=True)
+
+    st.caption(
+        f"Baseline CPM {proje_suresi:.1f} gün diyor (her görevde gizli "
+        f"güvenlik payı dahil). Critical Chain, bu payları kırpıp tek "
+        f"noktada topluyor: {cc['proje_suresi_tamponlu']} gün — daha "
+        f"gerçekçi ve TAKİP EDİLEBİLİR bir tahmin (görev görev değil, "
+        f"tamponun ne kadarının tüketildiğine bakarak izlenir)."
+    )
 
 st.divider()
 

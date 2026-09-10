@@ -101,6 +101,22 @@ class WorkPackage:
         """
         return random.triangular(self.iyimser, self.olasi, self.kotumser)
 
+    def kirpik_sure(self) -> float:
+        """
+        Critical Chain için: beklenen_sure()'ün aksine kotumser'in içine
+        gömülü fazladan güvenlik payını TAŞIMAZ. PERT üçlüsündeki 'olasi'
+        (en olası/mod değeri), tanım gereği zaten güvenlik payı eklenmemiş
+        tahmindir — bu yüzden yeni bir veri modeli icat etmek yerine
+        doğrudan onu kullanıyoruz.
+
+        beklenen_sure() ile farkı: beklenen_sure() üçünün ağırlıklı
+        ortalaması (kotumser'in etkisini taşır), kirpik_sure() ise
+        sadece 'en olası' senaryoyu yansıtır — CPM'i bu süreyle
+        çalıştırdığımızda ortaya çıkan fazladan gün, kritik zincirin
+        sonundaki proje tamponuna aktarılacak.
+        """
+        return self.olasi
+
     # ---------------- CPM ----------------
     def once_gelir(self, sonraki: "WorkPackage"):
         sonraki.onceki_gorevler.append(self)
@@ -198,26 +214,112 @@ class WorkPackage:
         return "Tanımsız"
 
 
-def kaynak_dengele(gorevler: list):
-    """Aynı kaynağa atanmış çakışan görevleri, float önceliğiyle sıralayıp yerleştirir."""
-    kaynak_gruplari = {}
-    for g in gorevler:
-        if g.atanan_kaynak:
-            kaynak_gruplari.setdefault(g.atanan_kaynak, []).append(g)
+def kaynak_dengele(gorevler: list, sure_hesapla=None):
+    """
+    Kaynak-kısıtlı ileri geçiş (resource-constrained forward pass /
+    'serial schedule generation scheme'). Görevleri, HEM bağımlılık
+    HEM kaynak müsaitliğini birlikte gözeterek zamanlar.
 
-    for kaynak, liste in kaynak_gruplari.items():
-        liste.sort(key=lambda g: g.float_hesapla())
-        musait = 0
-        for g in liste:
-            baslangic = max(g.es, musait)
-            g.fiili_baslangic = baslangic
-            g.fiili_bitis = baslangic + g.beklenen_sure()
-            musait = g.fiili_bitis
+    Önceki (basit) sürüm sadece aynı kaynağa atanmış görevleri kendi
+    grubu içinde sıralıyordu — bir görevin kaynak çakışmasıyla ötelenmesi,
+    ondan sonra gelen (farklı kaynaklı) görevlere YANSIMIYORDU. Bu sürüm
+    bunu düzeltiyor: her görev, öncüllerinin GERÇEK (fiili) bitişini baz
+    alıyor, sadece orijinal CPM es'ini değil.
+
+    sure_hesapla: ileri_gecis()/geri_gecis() ile aynı desen — verilmezse
+    beklenen_sure() kullanılır.
+    """
+    if sure_hesapla is None:
+        sure_hesapla = lambda g: g.beklenen_sure()
 
     for g in gorevler:
-        if g.fiili_baslangic is None:
-            g.fiili_baslangic = g.es
-            g.fiili_bitis = g.ef
+        g.fiili_baslangic = None
+        g.fiili_bitis = None
+
+    kaynak_musait = {}
+    kalanlar = list(gorevler)
+
+    while kalanlar:
+        # Hazır görevler: tüm bağımlılık öncülleri zaten zamanlanmış olanlar
+        hazirlar = [g for g in kalanlar
+                    if all(o.fiili_bitis is not None for o in g.onceki_gorevler)]
+        if not hazirlar:
+            break  # döngüsel bağımlılık gibi beklenmedik bir durum; güvenlik için çık
+
+        # Float'ı en düşük (en kritik) olan önce zamanlanır
+        hazirlar.sort(key=lambda g: g.float_hesapla() if g.float_hesapla() is not None else 0)
+        secilen = hazirlar[0]
+
+        network_hazir = max((o.fiili_bitis for o in secilen.onceki_gorevler), default=0)
+        kaynak_hazir = kaynak_musait.get(secilen.atanan_kaynak, 0) if secilen.atanan_kaynak else 0
+        secilen.fiili_baslangic = max(network_hazir, kaynak_hazir)
+        secilen.fiili_bitis = secilen.fiili_baslangic + sure_hesapla(secilen)
+
+        if secilen.atanan_kaynak:
+            kaynak_musait[secilen.atanan_kaynak] = secilen.fiili_bitis
+
+        kalanlar.remove(secilen)
+
+
+def kritik_zincir_belirle(yapraklar: list) -> list:
+    """
+    Kaynak dengelemesi sonrası ortaya çıkan GERÇEK en uzun zinciri
+    (Critical Chain) belirler. CPM'in kritik yolunun (float=0 görevler)
+    kopyası DEĞİL — hem bağımlılık hem kaynak çakışmasını hesaba katarak
+    geriye doğru izler.
+
+    Önkoşul: yapraklar listesi hem CPM (ileri_gecis/geri_gecis) hem
+    kaynak_dengele() ile işlenmiş olmalı (fiili_baslangic/fiili_bitis
+    dolu olmalı).
+
+    Mantık: projenin en son biten görevinden başlanır. Her adımda,
+    'bu görevi gerçekten hangi görev geciktirdi?' sorusu soruluyor —
+    aday iki türde: (a) bağımlılık önceli, (b) aynı kaynağa atanmış,
+    hemen önce biten görev. Hangisinin bitiş günü mevcut görevin
+    başlangıcıyla tam örtüşüyorsa, gerçek sebep odur.
+
+    Döner: zincirdeki görevler, projenin başından sonuna doğru sıralı.
+    """
+    if not yapraklar:
+        return []
+
+    mevcut = max(yapraklar, key=lambda g: g.fiili_bitis)
+    zincir = [mevcut]
+
+    while True:
+        adaylar = list(mevcut.onceki_gorevler)
+        if mevcut.atanan_kaynak:
+            adaylar += [g for g in yapraklar
+                        if g is not mevcut and g.atanan_kaynak == mevcut.atanan_kaynak]
+
+        gercek_onceki = None
+        for aday in adaylar:
+            if aday.fiili_bitis is not None and abs(aday.fiili_bitis - mevcut.fiili_baslangic) < 0.01:
+                if gercek_onceki is None or aday.fiili_bitis > gercek_onceki.fiili_bitis:
+                    gercek_onceki = aday
+
+        if gercek_onceki is None:
+            break
+        zincir.append(gercek_onceki)
+        mevcut = gercek_onceki
+
+    zincir.reverse()
+    return zincir
+
+
+def tampon_hesapla(kritik_zincir: list) -> float:
+    """
+    Kritik zincirdeki her görevden kırpılan güvenlik payını
+    (beklenen_sure() - kirpik_sure()) toplar, klasik Critical Chain
+    kuralına göre bunun YARISINI proje tamponu olarak döner.
+
+    Neden yarısı: kırpılan payın TAMAMINI tampon olarak geri koymak,
+    güvenlik payını hiç kırpmamış gibi olurdu — kırpmanın amacı
+    (Student Syndrome/Parkinson Kanunu'nun yol açtığı israfı önlemek)
+    ortadan kalkardı. Diğer yarısı kasıtlı olarak feda edilir.
+    """
+    toplam_kirpilan = sum(g.beklenen_sure() - g.kirpik_sure() for g in kritik_zincir)
+    return round(toplam_kirpilan / 2, 1)
 
 
 def en_riskli_gorevler(proje_koku: WorkPackage, adet: int = 5) -> list:

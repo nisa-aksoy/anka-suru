@@ -11,7 +11,7 @@ Bu dosya, elle hesaplayıp doğruladığımız senaryoları (2., 3., 4. ve 6. Ad
 '-v' (verbose) bayrağı, her testin adını ve sonucunu tek tek gösterir.
 """
 
-from anka_suru_core import WorkPackage, kaynak_dengele, en_riskli_gorevler
+from anka_suru_core import WorkPackage, kaynak_dengele, en_riskli_gorevler, kritik_zincir_belirle, tampon_hesapla
 
 
 def test_cpm_kritik_yol():
@@ -197,3 +197,98 @@ def test_rastgele_sure_sabit_gorevde_degismiyor():
                                iyimser=5, olasi=5, kotumser=5)
     for _ in range(50):
         assert sabit_gorev.rastgele_sure() == 5
+
+
+def test_kirpik_sure_olasi_degerini_donuyor():
+    """
+    kirpik_sure(), Critical Chain'in 'güvenlik paysız tahmin' kavramı için
+    doğrudan PERT üçlüsündeki 'olasi' (en olası/mod) değerini dönmeli.
+    """
+    gorev = WorkPackage("X", "Örnek görev", iyimser=4, olasi=6, kotumser=14)
+    assert gorev.kirpik_sure() == 6
+
+
+def test_kirpik_sure_beklenen_sureden_kisa_veya_esit():
+    """
+    kirpik_sure(), kotumser'in içine gömülü güvenlik payını taşımadığı
+    için beklenen_sure()'den (PERT ağırlıklı ortalaması) her zaman KISA
+    veya EN FAZLA eşit olmalı — asla daha uzun olamaz. Bu, Critical
+    Chain'in 'her görevden bir miktar süre kırpıyoruz' iddiasının
+    matematiksel garantisidir.
+    """
+    ornekler = [
+        WorkPackage("A", "İyimser-ağırlıklı", iyimser=2, olasi=4, kotumser=6),
+        WorkPackage("B", "Kötümser-ağırlıklı", iyimser=3, olasi=5, kotumser=20),
+        WorkPackage("C", "Simetrik", iyimser=5, olasi=5, kotumser=5),
+    ]
+    for gorev in ornekler:
+        assert gorev.kirpik_sure() <= gorev.beklenen_sure()
+
+
+def _abcd_agi_kur():
+    """Yardımcı: A->B,A->C,B->D,C->D ağını kurar; B ve C aynı kaynağa
+    atanmıştır (Zeynep K.), çakışma senaryosu için."""
+    a = WorkPackage("A", "Gereksinim analizi", iyimser=5, olasi=5, kotumser=5)
+    b = WorkPackage("B", "Tasarım", iyimser=3, olasi=3, kotumser=3, atanan_kaynak="Zeynep K.")
+    c = WorkPackage("C", "Kodlama", iyimser=7, olasi=7, kotumser=7, atanan_kaynak="Zeynep K.")
+    d = WorkPackage("D", "Entegrasyon", iyimser=4, olasi=4, kotumser=4)
+    a.once_gelir(b)
+    a.once_gelir(c)
+    b.once_gelir(d)
+    c.once_gelir(d)
+
+    gorevler = [a, b, c, d]
+    for g in gorevler:
+        g.ileri_gecis()
+    proje_bitis = max(g.ef for g in gorevler)
+    for g in gorevler:
+        g.geri_gecis(proje_bitis)
+    kaynak_dengele(gorevler)
+    return a, b, c, d, gorevler
+
+
+def test_kaynak_dengele_gecikme_zincire_yayiliyor():
+    """
+    D, hem B hem C'ye bağımlı. B kaynak çakışması yüzünden 15'te bitiyor
+    (C'den sonra). D'nin gerçek başlangıcı, B'nin bu GERÇEK (fiili)
+    bitişini görmeli — eski (hatalı) davranışta D, B'nin gecikmesini
+    görmeden kendi orijinal CPM es'inden (12) başlıyordu.
+    """
+    a, b, c, d, gorevler = _abcd_agi_kur()
+    assert c.fiili_baslangic == 5 and c.fiili_bitis == 12
+    assert b.fiili_baslangic == 12 and b.fiili_bitis == 15
+    assert d.fiili_baslangic == 15   # B'nin gecikmesini görüyor, C'nin değil
+    assert d.fiili_bitis == 19
+
+
+def test_kritik_zincir_belirle_gercek_darbogazi_buluyor():
+    """
+    CPM'in kritik yolu (float=0) A-C-D derdi (B'nin float'ı var çünkü
+    ağ/bağımlılık açısından acelesi yok). Ama kaynak çakışması yüzünden
+    asıl darboğaz B'dir (D'yi 15'e kadar bekletiyor). Critical Chain
+    bunu doğru yakalayıp zincire B'yi (C'yi değil) dahil etmeli.
+    """
+    a, b, c, d, gorevler = _abcd_agi_kur()
+    zincir_kodlari = [g.wbs_kodu for g in kritik_zincir_belirle(gorevler)]
+    assert zincir_kodlari == ["A", "C", "B", "D"]
+
+
+def test_tampon_hesapla_elle_hesapla_ile_eslesiyor():
+    """
+    tampon_hesapla(), zincirdeki her görevin (beklenen_sure()-kirpik_sure())
+    farkını toplayıp yarısını dönmeli. A-B-C-D ağında iyimser=olasi=kotumser
+    (sabit değerler) olduğu için beklenen_sure()==kirpik_sure()==olasi —
+    yani bu senaryoda kırpılan pay SIFIR olmalı (belirsizlik yok ki
+    kırpılacak bir şey olsun). Sıfır olmayan bir örnekle de kontrol ediyoruz.
+    """
+    a, b, c, d, gorevler = _abcd_agi_kur()
+    zincir = kritik_zincir_belirle(gorevler)
+    assert tampon_hesapla(zincir) == 0.0  # iyimser=olasi=kotumser -> kırpılacak pay yok
+
+    # Belirsizliği olan (iyimser != kotumser) bir görevle elle doğrulama
+    x = WorkPackage("X", "Belirsiz görev", iyimser=4, olasi=6, kotumser=14)
+    y = WorkPackage("Y", "Belirsiz görev 2", iyimser=2, olasi=3, kotumser=10)
+    # x: beklenen=(4+24+14)/6=7.0, kirpik=6 -> fark=1.0
+    # y: beklenen=(2+12+10)/6=4.0, kirpik=3 -> fark=1.0
+    # toplam=2.0, tampon=1.0
+    assert tampon_hesapla([x, y]) == 1.0
