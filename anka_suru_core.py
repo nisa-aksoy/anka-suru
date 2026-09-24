@@ -72,12 +72,6 @@ class WorkPackage:
             yield from cocuk.tum_alt_agaci_dolas()
 
     def toplam_butce(self) -> float:
-        """
-        WBS'in '%100 Kuralı'nın gerçek uygulaması:
-        Bir fazın bütçesi kendi başına girilmez, altındaki TÜM iş
-        paketlerinin bütçe toplamından türetilir (roll-up).
-        Yaprak (iş paketi) ise zaten kendi butce'sini döner.
-        """
         if self.yaprak_mi():
             return self.butce
         return sum(cocuk.toplam_butce() for cocuk in self.alt_gorevler)
@@ -90,31 +84,9 @@ class WorkPackage:
         return (self.kotumser - self.iyimser) / 6
 
     def rastgele_sure(self) -> float:
-        """
-        Monte Carlo simülasyonu için: beklenen_sure()'ün aksine SABİT bir
-        ortalama değil, üçgen dağılımdan TEK BİR RASTGELE ÖRNEK döner.
-
-        Aynı (iyimser, olasi, kotumser) üçlüsünü kullanır — yeni veri
-        girişi gerekmez. iyimser=olasi=kotumser olan görevlerde (ör. sadece
-        takvime giren süresi-0 riskler) random.triangular otomatik olarak
-        her seferinde o sabit değeri döner, hata vermez.
-        """
-        return random.triangular(self.iyimser, self.olasi, self.kotumser)
+        return random.triangular(self.iyimser, self.kotumser, self.olasi)
 
     def kirpik_sure(self) -> float:
-        """
-        Critical Chain için: beklenen_sure()'ün aksine kotumser'in içine
-        gömülü fazladan güvenlik payını TAŞIMAZ. PERT üçlüsündeki 'olasi'
-        (en olası/mod değeri), tanım gereği zaten güvenlik payı eklenmemiş
-        tahmindir — bu yüzden yeni bir veri modeli icat etmek yerine
-        doğrudan onu kullanıyoruz.
-
-        beklenen_sure() ile farkı: beklenen_sure() üçünün ağırlıklı
-        ortalaması (kotumser'in etkisini taşır), kirpik_sure() ise
-        sadece 'en olası' senaryoyu yansıtır — CPM'i bu süreyle
-        çalıştırdığımızda ortaya çıkan fazladan gün, kritik zincirin
-        sonundaki proje tamponuna aktarılacak.
-        """
         return self.olasi
 
     # ---------------- CPM ----------------
@@ -123,13 +95,6 @@ class WorkPackage:
         self.sonraki_gorevler.append(sonraki)
 
     def ileri_gecis(self, sure_hesapla=None):
-        """
-        sure_hesapla: görev süresini nasıl hesaplayacağını belirten
-        opsiyonel bir fonksiyon (bir WorkPackage alır, bir sayı döner).
-        Verilmezse (normal/deterministik kullanım — get_proje, What-If)
-        varsayılan olarak beklenen_sure() (sabit PERT ortalaması) kullanılır.
-        Monte Carlo simülasyonunda bunun yerine rastgele_sure() verilir.
-        """
         if sure_hesapla is None:
             sure_hesapla = lambda g: g.beklenen_sure()
 
@@ -189,8 +154,8 @@ class WorkPackage:
         cpi = ev / ac if ac else None
         spi = ev / pv if pv else None
         return {"EV": round(ev, 2), "PV": round(pv, 2), "AC": round(ac, 2),
-                "CPI": round(cpi, 2) if cpi else None,
-                "SPI": round(spi, 2) if spi else None}
+                "CPI": round(cpi, 2) if cpi is not None else None,
+                "SPI": round(spi, 2) if spi is not None else None}
 
     def tahmini_bitis_maliyeti(self, bugun: float) -> float:
         endeksler = self.performans_endeksleri(bugun)
@@ -215,20 +180,6 @@ class WorkPackage:
 
 
 def kaynak_dengele(gorevler: list, sure_hesapla=None):
-    """
-    Kaynak-kısıtlı ileri geçiş (resource-constrained forward pass /
-    'serial schedule generation scheme'). Görevleri, HEM bağımlılık
-    HEM kaynak müsaitliğini birlikte gözeterek zamanlar.
-
-    Önceki (basit) sürüm sadece aynı kaynağa atanmış görevleri kendi
-    grubu içinde sıralıyordu — bir görevin kaynak çakışmasıyla ötelenmesi,
-    ondan sonra gelen (farklı kaynaklı) görevlere YANSIMIYORDU. Bu sürüm
-    bunu düzeltiyor: her görev, öncüllerinin GERÇEK (fiili) bitişini baz
-    alıyor, sadece orijinal CPM es'ini değil.
-
-    sure_hesapla: ileri_gecis()/geri_gecis() ile aynı desen — verilmezse
-    beklenen_sure() kullanılır.
-    """
     if sure_hesapla is None:
         sure_hesapla = lambda g: g.beklenen_sure()
 
@@ -240,13 +191,11 @@ def kaynak_dengele(gorevler: list, sure_hesapla=None):
     kalanlar = list(gorevler)
 
     while kalanlar:
-        # Hazır görevler: tüm bağımlılık öncülleri zaten zamanlanmış olanlar
         hazirlar = [g for g in kalanlar
                     if all(o.fiili_bitis is not None for o in g.onceki_gorevler)]
         if not hazirlar:
-            break  # döngüsel bağımlılık gibi beklenmedik bir durum; güvenlik için çık
+            break
 
-        # Float'ı en düşük (en kritik) olan önce zamanlanır
         hazirlar.sort(key=lambda g: g.float_hesapla() if g.float_hesapla() is not None else 0)
         secilen = hazirlar[0]
 
@@ -262,24 +211,6 @@ def kaynak_dengele(gorevler: list, sure_hesapla=None):
 
 
 def kritik_zincir_belirle(yapraklar: list) -> list:
-    """
-    Kaynak dengelemesi sonrası ortaya çıkan GERÇEK en uzun zinciri
-    (Critical Chain) belirler. CPM'in kritik yolunun (float=0 görevler)
-    kopyası DEĞİL — hem bağımlılık hem kaynak çakışmasını hesaba katarak
-    geriye doğru izler.
-
-    Önkoşul: yapraklar listesi hem CPM (ileri_gecis/geri_gecis) hem
-    kaynak_dengele() ile işlenmiş olmalı (fiili_baslangic/fiili_bitis
-    dolu olmalı).
-
-    Mantık: projenin en son biten görevinden başlanır. Her adımda,
-    'bu görevi gerçekten hangi görev geciktirdi?' sorusu soruluyor —
-    aday iki türde: (a) bağımlılık önceli, (b) aynı kaynağa atanmış,
-    hemen önce biten görev. Hangisinin bitiş günü mevcut görevin
-    başlangıcıyla tam örtüşüyorsa, gerçek sebep odur.
-
-    Döner: zincirdeki görevler, projenin başından sonuna doğru sıralı.
-    """
     if not yapraklar:
         return []
 
@@ -308,16 +239,6 @@ def kritik_zincir_belirle(yapraklar: list) -> list:
 
 
 def tampon_hesapla(kritik_zincir: list) -> float:
-    """
-    Kritik zincirdeki her görevden kırpılan güvenlik payını
-    (beklenen_sure() - kirpik_sure()) toplar, klasik Critical Chain
-    kuralına göre bunun YARISINI proje tamponu olarak döner.
-
-    Neden yarısı: kırpılan payın TAMAMINI tampon olarak geri koymak,
-    güvenlik payını hiç kırpmamış gibi olurdu — kırpmanın amacı
-    (Student Syndrome/Parkinson Kanunu'nun yol açtığı israfı önlemek)
-    ortadan kalkardı. Diğer yarısı kasıtlı olarak feda edilir.
-    """
     toplam_kirpilan = sum(g.beklenen_sure() - g.kirpik_sure() for g in kritik_zincir)
     return round(toplam_kirpilan / 2, 1)
 
@@ -330,20 +251,6 @@ def en_riskli_gorevler(proje_koku: WorkPackage, adet: int = 5) -> list:
 
 
 def s_egrisi_pv(yapraklar: list, proje_suresi: float = None) -> list:
-    """
-    S-Curve'ün PV (planlanan değer) eğrisi: proje başından (gün 0)
-    proje sonuna kadar HER GÜN için, o güne kadar planlanan kümülatif
-    bütçeyi hesaplar.
-
-    Yeni bir hesaplama mantığı DEĞİL — zaten var olan
-    planlanan_deger(bugun) metodunu (tek bir gün için tanımlı) sadece
-    bir döngüyle her gün için çağırıp topluyor. EV/AC'nin aksine PV
-    tamamen plana dayalı olduğu için (gerçek ilerleme verisi
-    gerektirmediği için) her gün için hesaplanabiliyor.
-
-    Döner: [(gun, kumulatif_pv), (gun, kumulatif_pv), ...] — gün 0'dan
-    proje_suresi'ne kadar, 1'er gün aralıklarla.
-    """
     if proje_suresi is None:
         proje_suresi = max(g.ef for g in yapraklar)
     proje_suresi = int(round(proje_suresi))
@@ -353,27 +260,3 @@ def s_egrisi_pv(yapraklar: list, proje_suresi: float = None) -> list:
         kumulatif_pv = sum(g.planlanan_deger(gun) for g in yapraklar)
         egri.append((gun, kumulatif_pv))
     return egri
-
-
-if __name__ == "__main__":
-    # Hızlı bir doğrulama: 6 modül birlikte tutarlı çalışıyor mu?
-    a = WorkPackage("A", "Gereksinim analizi", iyimser=3, olasi=5, kotumser=8, butce=20000)
-    b = WorkPackage("B", "Alt sistem tasarımı", iyimser=2, olasi=3, kotumser=5,
-                     butce=15000, atanan_kaynak="Zeynep K.", olasilik=2, etki=3)
-    c = WorkPackage("C", "Yazılım kodlama", iyimser=4, olasi=6, kotumser=14,
-                     butce=40000, atanan_kaynak="Zeynep K.", olasilik=4, etki=5)
-    a.once_gelir(b)
-    a.once_gelir(c)
-
-    for g in [a, b, c]:
-        g.ileri_gecis()
-    proje_bitis = max(g.ef for g in [a, b, c])
-    for g in [a, b, c]:
-        g.geri_gecis(proje_bitis)
-
-    kaynak_dengele([a, b, c])
-
-    for g in [a, b, c]:
-        print(f"{g.wbs_kodu} | TE:{round(g.beklenen_sure(),1)} | "
-              f"Fiili:{g.fiili_baslangic}-{g.fiili_bitis} | "
-              f"Risk:{g.risk_skoru()} ({g.risk_seviyesi()})")

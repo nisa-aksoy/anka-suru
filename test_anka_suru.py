@@ -11,8 +11,10 @@ Bu dosya, elle hesaplayıp doğruladığımız senaryoları (2., 3., 4. ve 6. Ad
 '-v' (verbose) bayrağı, her testin adını ve sonucunu tek tek gösterir.
 """
 
+import statistics
+
 from anka_suru_core import WorkPackage, kaynak_dengele, en_riskli_gorevler, kritik_zincir_belirle, tampon_hesapla
-from proje_verisi import get_proje
+from proje_verisi import get_proje, agaci_kur, hesapla, monte_carlo_calistir, critical_chain_calistir
 from karar_destek import (
     takvim_karti_uret, butce_karti_uret, risk_karti_uret,
     bilesik_risk_karti_uret, teslim_tarihi_karti_uret, kaynak_karti_uret,
@@ -81,6 +83,60 @@ def test_evm_endeksleri():
     assert sonuc["AC"] == 45_000
     assert sonuc["SPI"] == 0.7
     assert round(sonuc["CPI"], 2) == 0.78
+
+
+def test_performans_endeksleri_ev_sifirken_cpi_spi_none_ile_karismiyor():
+    """
+    Düzeltilen bug: EV=0 (henüz ilerleme yok) ama AC>0 (harcama yapılmış)
+    ve PV>0 (planlanan zaman geçmiş) olduğunda, gerçekte hesaplanabilen
+    CPI=0.0 ve SPI=0.0 değerleri -- Python'da 0.0'ın 'falsy' olması
+    yüzünden (eski kod: 'if cpi else None') yanlışlıkla None'a
+    (sanki hiç veri yokmuş gibi) düşüyordu. Bu, en kötü performans
+    sinyalini (sıfır ilerleme + harcama/planlanan süre geçmiş) tabloda
+    gizliyordu. Artık 'is not None' kontrolü kullanıldığı için CPI/SPI
+    gerçekten hesaplanabiliyorsa (ac>0, pv>0) -- değerleri 0.0 olsa
+    bile -- olduğu gibi gösterilmeli.
+    """
+    gorev = WorkPackage("T", "Test görevi", iyimser=10, olasi=10, kotumser=10, butce=50_000)
+    gorev.ileri_gecis()
+    gorev.geri_gecis(proje_bitis=10)
+    gorev.tamamlanma_yuzdesi = 0       # EV = 0
+    gorev.gerceklesen_maliyet = 8_000  # AC > 0
+
+    sonuc = gorev.performans_endeksleri(bugun=10)  # bugun >= ef -> PV = tam bütçe > 0
+
+    assert sonuc["EV"] == 0.0
+    assert sonuc["PV"] == 50_000
+    assert sonuc["AC"] == 8_000
+    assert sonuc["CPI"] == 0.0   # None DEĞİL
+    assert sonuc["SPI"] == 0.0   # None DEĞİL
+
+    # Karşı örnek: CPI ve SPI birbirinden BAĞIMSIZ iki farklı 'veri yok'
+    # koşuluna bağlı -- CPI, AC=0 iken None olur (harcama verisi yok);
+    # SPI ise PV=0 iken None olur (henüz zaman geçmemiş). AC=0 olması
+    # SPI'yi etkilemez: bugun=10'da (görev bitmiş, PV>0) SPI=0.0 olarak
+    # (gerçek, hesaplanabilir bir değer) dönmesi beklenir -- None'a hâlâ
+    # yanlışlıkla düşmediğinin kanıtı.
+    gorev2 = WorkPackage("T2", "Harcaması olmayan görev",
+                          iyimser=10, olasi=10, kotumser=10, butce=50_000)
+    gorev2.ileri_gecis()
+    gorev2.geri_gecis(proje_bitis=10)
+    sonuc2 = gorev2.performans_endeksleri(bugun=10)  # AC=0, ama PV>0
+    assert sonuc2["CPI"] is None    # gerçekten veri yok (AC=0)
+    assert sonuc2["SPI"] == 0.0     # veri VAR ve hesaplanan değer 0.0
+
+    # PV=0 durumunda (görev henüz başlamamış) SPI gerçekten None olmalı.
+    onceki = WorkPackage("H", "Önceki görev", iyimser=5, olasi=5, kotumser=5)
+    henuz_baslamamis = WorkPackage("T4", "Henüz başlamamış görev",
+                                    iyimser=10, olasi=10, kotumser=10, butce=50_000)
+    onceki.once_gelir(henuz_baslamamis)
+    for x in (onceki, henuz_baslamamis):
+        x.ileri_gecis()
+    proje_bitis = max(x.ef for x in (onceki, henuz_baslamamis))
+    for x in (onceki, henuz_baslamamis):
+        x.geri_gecis(proje_bitis)
+    sonuc3 = henuz_baslamamis.performans_endeksleri(bugun=0)  # bugun <= es -> PV=0
+    assert sonuc3["SPI"] is None
 
 
 def test_risk_skoru_ve_seviyesi():
@@ -166,30 +222,62 @@ def test_kaynak_dengele_basit_senaryo():
 
 def test_rastgele_sure_sinirlar_icinde():
     """
-    rastgele_sure()'ün her örneği [iyimser, kotumser] aralığında olmalı —
-    üçgen dağılımın matematiksel garantisi budur. 500 örnekle test ediyoruz
-    ki sınırların dışına taşan tek bir değer bile olmasın.
+    rastgele_sure()'ün her örneği [iyimser, kotumser] aralığında olmalı VE
+    bu aralığın ÜST UCUNA (kötümser) gerçekten yaklaşabilmeli.
+
+    Önceki fixture (iyimser=4, olasi=6, kotumser=14) bunu güvenilir şekilde
+    sınamıyordu: random.triangular()'a argümanlar YANLIŞ sırayla verilse
+    bile (low=iyimser, high=olasi, mode=kotumser), o üçlüde ortaya çıkan
+    dar/bozuk aralık ([~4, ~8.5]) yine de [iyimser, kotumser]=[4,14] alt
+    kümesi kaldığı için "sınırlar içinde" testi YANLIŞLIKLA geçiyordu --
+    üst sınıra hiç yaklaşmadığı hiç fark edilmiyordu.
+
+    Bu yüzden burada belirgin şekilde asimetrik bir üçlü kullanıyoruz
+    (olasi, kötümserden çok uzakta): doğru argüman sırasıyla (low=iyimser,
+    high=kotumser, mode=olasi) binlerce örnekten en az birinin kötümsere
+    ciddi biçimde yaklaşması gerekir. Argümanlar ters verilirse (bug)
+    high=olasi=5 olacağından örnekler yapısal olarak ~9'u hiç geçemez --
+    bu yüzden "max > 15" eşiği bug'ı güvenilir şekilde yakalar.
     """
-    gorev = WorkPackage("X", "Örnek görev", iyimser=4, olasi=6, kotumser=14)
-    for _ in range(500):
-        s = gorev.rastgele_sure()
-        assert 4 <= s <= 14
+    gorev = WorkPackage("X", "Örnek görev", iyimser=2, olasi=5, kotumser=20)
+    ornekler = [gorev.rastgele_sure() for _ in range(3000)]
+
+    for s in ornekler:
+        assert 2 <= s <= 20
+
+    # Üst sınıra (kötümser=20) gerçekten yaklaşılabiliyor mu?
+    # Doğru argüman sırasında gözlenen maksimum tipik olarak ~19.3-19.9;
+    # ters sırada (bug) yapısal olarak ~9.3'ü hiç geçmiyor. 15 eşiği
+    # ikisi arasında geniş, güvenli bir marj bırakıyor.
+    assert max(ornekler) > 15
 
 
-def test_rastgele_sure_ortalamasi_beklenen_sureye_yakin():
+def test_rastgele_sure_ortalamasi_dogru_triangular_formulune_yakinsiyor():
     """
-    İstatistiksel tutarlılık kontrolü: çok sayıda rastgele_sure() örneğinin
-    ortalaması, aynı üçlüden hesaplanan beklenen_sure()'e (PERT ortalaması)
-    yakınsamalı. Rastgelelik olduğu için '==' değil, geniş bir tolerans
-    (+-%10) ile kontrol ediyoruz — amaç dağılımın merkezinin doğru
-    yerde olduğunu doğrulamak, tam eşitlik değil.
+    İstatistiksel tutarlılık kontrolü: rastgele_sure(), PERT'in ağırlıklı
+    ortalamasını (beklenen_sure = (i+4o+k)/6) DEĞİL, ham bir üçgen
+    (triangular) dağılımı örnekler. Bu yüzden yakınsaması gereken doğru
+    referans, üçgen dağılımın kendi ortalama formülüdür:
+        (iyimser + olasi + kotumser) / 3
+
+    NOT -- önceki versiyon burada beklenen_sure()'e (PERT ortalaması)
+    yakınsamayı kontrol ediyordu. Bu, iyimser=4/olasi=6/kotumser=14
+    üçlüsünde YANLIŞLIKLA geçiyordu: argümanlar ters verildiğinde
+    (low=iyimser, high=olasi, mode=kotumser) ortaya çıkan bozuk dağılımın
+    ortalaması (~6.97) tesadüfen PERT ortalamasına (7.0) yakın çıkıyordu.
+    Oysa doğru üçgen dağılımın gerçek ortalaması 8.0'dır (7.0'dan %14
+    uzak) -- yani eski test, PERT ile üçgen dağılımın FARKLI formüller
+    olduğunu göz ardı ederek bug'ı gizliyordu. Bu test artık doğru
+    formülle karşılaştırıyor: argüman sırası bozuksa gözlenen ortalama
+    (~6.97), doğru değerden (8.0) toleransın dışına düşüp testi
+    başarısız kılar.
     """
     gorev = WorkPackage("X", "Örnek görev", iyimser=4, olasi=6, kotumser=14)
-    beklenen = gorev.beklenen_sure()  # (4 + 4*6 + 14) / 6 = 7.0
+    dogru_ortalama = (gorev.iyimser + gorev.olasi + gorev.kotumser) / 3  # 8.0
 
     N = 5000
     ortalama = sum(gorev.rastgele_sure() for _ in range(N)) / N
-    assert abs(ortalama - beklenen) < beklenen * 0.10
+    assert abs(ortalama - dogru_ortalama) < dogru_ortalama * 0.10
 
 
 def test_rastgele_sure_sabit_gorevde_degismiyor():
@@ -512,3 +600,125 @@ def test_karar_destek_calistir_gercek_projeyle_uctan_uca_calisiyor():
     assert sonuc["genel_durum"] in ("Yeşil", "Sarı", "Kırmızı")
     kategoriler = {k["kategori"] for k in sonuc["kartlar"]}
     assert kategoriler == {"Takvim", "Bütçe", "Risk", "Bileşik Risk"}
+
+
+# --------------------------------------------------------------------------
+# Orkestrasyon / entegrasyon testleri (monte_carlo_calistir, critical_chain_
+# calistir ve What-If akışı) -- gerçek ANKA-SÜRÜ verisiyle uçtan uca çalışır.
+# Alt bileşenler (rastgele_sure, kirpik_sure, kritik_zincir_belirle,
+# tampon_hesapla) yukarıda ayrı ayrı test edildi; buradaki testler onların
+# gerçek projede DOĞRU SIRAYLA bir araya geldiğini doğruluyor.
+# --------------------------------------------------------------------------
+
+def test_monte_carlo_calistir_gercek_projeyle_tutarli_sonuc_uretiyor():
+    """
+    monte_carlo_calistir() her iterasyonda agaci_kur() ile TAZE bir ağaç
+    kurup rastgele_sure() ile ileri_gecis() çalıştırır. Ağaç iterasyonlar
+    arasında yeniden kullanılsaydı (ileri_gecis'in kendi kendini koruyan
+    "if self.es is not None: return" mekanizması yüzünden), tüm sonuçlar
+    donar ve birbirinin aynısı çıkardı -- yani varyans sıfır olurdu.
+
+    Rastgele örneklemede iki iterasyonun nadiren aynı sonucu vermesi
+    teorik olarak mümkün olduğundan "300 sonucun HEPSİ farklı" yerine,
+    daha sağlam bir varyans kontrolü kullanılıyor: standart sapma
+    sıfırdan büyük mü VE sonuçların en az %95'i birbirinden farklı mı.
+    """
+    sonuc = monte_carlo_calistir(300)
+
+    assert sonuc["iterasyon_sayisi"] == 300
+    assert len(sonuc["sonuclar"]) == 300
+
+    # Fresh-tree-per-iteration garantisi: varyans sıfırdan büyük olmalı.
+    assert statistics.pstdev(sonuc["sonuclar"]) > 0
+    # Ek güvence: sonuçların büyük çoğunluğu (>= %95) birbirinden farklı.
+    assert len(set(sonuc["sonuclar"])) >= round(300 * 0.95)
+
+    assert sonuc["p50"] <= sonuc["p80"] <= sonuc["p90"]
+
+
+def test_monte_carlo_calistir_kucuk_iterasyon_sayisinda_cokmuyor():
+    """
+    Edge case: statistics.quantiles() en az 2 veri noktası ister.
+    monte_carlo_calistir(1) (hatta 0) eskiden StatisticsError ile
+    çöküyordu. Uygulamadaki slider (min_value=100) bu durumu UI
+    üzerinden hiç tetiklemez, ama fonksiyon genel kullanıma açık
+    olduğu için (doğrudan çağrılırsa) çökmemeli -- burada "sonuçlar
+    her zaman benzersiz olmalı" gibi bir beklenti YOK, sadece
+    çökmediği ve mantıklı bir değer döndürdüğü kontrol ediliyor.
+    """
+    sonuc_bir = monte_carlo_calistir(1)
+    assert sonuc_bir["iterasyon_sayisi"] == 1
+    assert len(sonuc_bir["sonuclar"]) == 1
+    # Tek örnekle gerçek bir yüzdelik hesaplanamaz -- en iyi tahmin
+    # elimizdeki tek değerin kendisidir.
+    assert sonuc_bir["p50"] == sonuc_bir["p80"] == sonuc_bir["p90"] == round(sonuc_bir["sonuclar"][0], 1)
+
+    sonuc_iki = monte_carlo_calistir(2)
+    assert len(sonuc_iki["sonuclar"]) == 2
+    assert sonuc_iki["p50"] <= sonuc_iki["p80"] <= sonuc_iki["p90"]
+
+    sonuc_on = monte_carlo_calistir(10)
+    assert len(sonuc_on["sonuclar"]) == 10
+    assert sonuc_on["p50"] <= sonuc_on["p80"] <= sonuc_on["p90"]
+
+
+def test_critical_chain_calistir_gercek_projeyle_tutarli_sonuc_uretiyor():
+    """
+    Mevcut testler kritik_zincir_belirle() ve tampon_hesapla()'yı küçük,
+    sentetik senaryolarla tek tek doğruluyor; ama bu parçaların gerçek
+    proje verisiyle, doğru sırayla (kirpik_sure -> ileri_gecis ->
+    geri_gecis -> kaynak_dengele -> kritik_zincir_belirle ->
+    tampon_hesapla) bir araya geldiğini hiçbir test doğrulamıyor. Bu test
+    tam o orkestrasyonu, dönen dict'in yapısını ve iç aritmetik
+    tutarlılığını kontrol ediyor.
+    """
+    _baseline_proje, baseline_yapraklar = get_proje()
+    baseline_suresi = max(g.ef for g in baseline_yapraklar)
+
+    sonuc = critical_chain_calistir()
+
+    assert set(sonuc.keys()) == {
+        "yapraklar", "kritik_zincir", "proje_suresi_kirpik",
+        "proje_tamponu", "proje_suresi_tamponlu",
+    }
+    assert len(sonuc["kritik_zincir"]) > 0
+
+    # proje_suresi_tamponlu, kirpik süre + tamponun toplamı olmalı.
+    assert sonuc["proje_suresi_tamponlu"] == round(
+        sonuc["proje_suresi_kirpik"] + sonuc["proje_tamponu"], 1
+    )
+
+    # kirpik_sure ("olası" süre, iyimser bir tahmin) kullanıldığı için
+    # kirpik süre, normal (beklenen_sure ile hesaplanan) baseline süreden
+    # kısa ya da eşit olmalı -- kirpik_sure'nin gerçekten devreye
+    # girdiğinin kanıtı.
+    assert sonuc["proje_suresi_kirpik"] <= baseline_suresi
+
+
+def test_what_if_senaryosu_baseline_agaci_mutate_etmiyor():
+    """
+    app.py'deki What-If akışının simülasyonu: agaci_kur() ile kurulan
+    bağımsız bir ağaç üzerinde bir görevin PERT değerleri değiştirilip
+    hesapla() çalıştırılıyor. Bu akış test suite'inde hiç kapsanmıyordu.
+
+    İki şey kanıtlanıyor:
+    1. PERT değişikliği gerçekten proje süresine yansıyor.
+    2. Bu değişiklik, get_proje() ile kurulan AYRI bir baseline ağacın
+       nesnelerini ETKİLEMİYOR -- agaci_kur()'un her çağrıda tamamen
+       bağımsız yeni nesneler ürettiğinin kanıtı. Bu olmadan, uygulamada
+       kullanıcı bir what-if senaryosu denediğinde asıl proje verisi
+       sessizce bozulabilir.
+    """
+    _baseline_proje, baseline_yapraklar = get_proje()
+    baseline_suresi_once = max(g.ef for g in baseline_yapraklar)
+
+    _whatif_proje, whatif_yapraklar = agaci_kur()
+    sensor = next(g for g in whatif_yapraklar if g.wbs_kodu == "2.2")
+    sensor.iyimser, sensor.olasi, sensor.kotumser = 50, 60, 80
+    hesapla(whatif_yapraklar)
+    whatif_suresi = max(g.ef for g in whatif_yapraklar)
+
+    assert whatif_suresi > baseline_suresi_once
+
+    baseline_suresi_sonra = max(g.ef for g in baseline_yapraklar)
+    assert baseline_suresi_sonra == baseline_suresi_once

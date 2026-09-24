@@ -37,11 +37,19 @@ proje_cpi = toplam_ev / toplam_ac if toplam_ac else None
 proje_spi = toplam_ev / toplam_pv if toplam_pv else None
 proje_eac = toplam_butce / proje_cpi if proje_cpi else toplam_butce
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Toplam bütçe (BAC)", f"{toplam_butce:,.0f} TL")
-c2.metric("CPI — maliyet performansı", f"{proje_cpi:.2f}" if proje_cpi else "—")
-c3.metric("SPI — takvim performansı", f"{proje_spi:.2f}" if proje_spi else "—")
-c4.metric("EAC — tahmini bitiş maliyeti", f"{proje_eac:,.0f} TL")
+# gap="small" + değer metninden " TL" birimini çıkarmak (birim, help tooltip'inde
+# ve sütun başlığında zaten açık): ~1024-1150px genişlikte, kenar çubuğu açıkken
+# 4 sütuna bölünen alan "470,000 TL" gibi bir değeri sığdıramayıp kırpıyordu.
+# Sayının kendisi (ör. "470,000") hiçbir zaman kısaltılmıyor/kırpılmıyor.
+c1, c2, c3, c4 = st.columns(4, gap="small")
+c1.metric("Toplam bütçe", f"{toplam_butce:,.0f}",
+          help="BAC — Budget at Completion: projenin onaylanmış toplam bütçesi (TL)")
+c2.metric("CPI", f"{proje_cpi:.2f}" if proje_cpi else "—",
+          help="CPI — maliyet performans endeksi (Cost Performance Index)")
+c3.metric("SPI", f"{proje_spi:.2f}" if proje_spi else "—",
+          help="SPI — takvim performans endeksi (Schedule Performance Index)")
+c4.metric("EAC", f"{proje_eac:,.0f}",
+          help="EAC — tahmini bitiş maliyeti (Estimate at Completion), TL")
 
 st.divider()
 
@@ -87,7 +95,12 @@ df_gantt = pd.DataFrame([{
 
 fig_gantt = px.timeline(
     df_gantt, x_start="Başlangıç", x_end="Bitiş", y="İş paketi", color="Durum",
-    color_discrete_map={"Kritik": "#D85A30", "Bolluklu": "#888780"}
+    color_discrete_map={"Kritik": "#D85A30", "Bolluklu": "#888780"},
+    # Plotly, renk (color="Durum") grubuna göre kategori sırası oluşturuyor;
+    # bu da tek başına farklı bir Durum'a sahip görevin listede yanlış yere
+    # düşmesine yol açabiliyor. df_gantt'taki (yani yapraklar'daki) mevcut
+    # mantıklı sırayı burada açıkça sabitliyoruz.
+    category_orders={"İş paketi": df_gantt["İş paketi"].tolist()}
 )
 fig_gantt.update_yaxes(autorange="reversed")  # ilk görev en üstte görünsün
 st.plotly_chart(fig_gantt, use_container_width=True)
@@ -124,21 +137,28 @@ with st.form("whatif_formu"):
     calistir = st.form_submit_button("Senaryoyu çalıştır")
 
 if calistir:
-    # Taze ağaç — orijinal 'proje'/'yapraklar' listesine hiç dokunmuyoruz
-    proje2, yapraklar2 = agaci_kur()
-    hedef2 = next(g for g in yapraklar2 if g.wbs_kodu == secilen_kodu)
-    hedef2.iyimser = yeni_iyimser
-    hedef2.olasi = yeni_olasi
-    hedef2.kotumser = yeni_kotumser
-    hesapla(yapraklar2)
+    if not (yeni_iyimser <= yeni_olasi <= yeni_kotumser):
+        st.error(
+            "Geçersiz PERT değerleri: iyimser ≤ olası ≤ kötümser sırası "
+            "sağlanmalı. Girilen değerler bu sırayı bozuyor, senaryo "
+            "çalıştırılmadı — baseline plana dokunulmadı."
+        )
+    else:
+        # Taze ağaç — orijinal 'proje'/'yapraklar' listesine hiç dokunmuyoruz
+        proje2, yapraklar2 = agaci_kur()
+        hedef2 = next(g for g in yapraklar2 if g.wbs_kodu == secilen_kodu)
+        hedef2.iyimser = yeni_iyimser
+        hedef2.olasi = yeni_olasi
+        hedef2.kotumser = yeni_kotumser
+        hesapla(yapraklar2)
 
-    st.session_state.whatif_sonuc = {
-        "gorev": secilen_etiket,
-        "eski_sure": round(proje_suresi, 1),
-        "yeni_sure": round(max(g.ef for g in yapraklar2), 1),
-        "eski_kritik": sorted(g.wbs_kodu for g in yapraklar if g.kritik_mi()),
-        "yeni_kritik": sorted(g.wbs_kodu for g in yapraklar2 if g.kritik_mi()),
-    }
+        st.session_state.whatif_sonuc = {
+            "gorev": secilen_etiket,
+            "eski_sure": round(proje_suresi, 1),
+            "yeni_sure": round(max(g.ef for g in yapraklar2), 1),
+            "eski_kritik": sorted(g.wbs_kodu for g in yapraklar if g.kritik_mi()),
+            "yeni_kritik": sorted(g.wbs_kodu for g in yapraklar2 if g.kritik_mi()),
+        }
 
 if "whatif_sonuc" in st.session_state:
     sonuc = st.session_state.whatif_sonuc
@@ -147,7 +167,11 @@ if "whatif_sonuc" in st.session_state:
     st.markdown(f"**Senaryo:** {sonuc['gorev']} değiştirildi")
     c1, c2 = st.columns(2)
     c1.metric("Baseline proje süresi", f"{sonuc['eski_sure']} gün")
-    c2.metric("What-If proje süresi", f"{sonuc['yeni_sure']} gün", delta=f"{fark:+.1f} gün")
+    # delta_color="inverse": proje süresi için ARTIŞ kötü haberdir, bu yüzden
+    # Streamlit'in varsayılan "pozitif = yeşil" renklendirmesi burada ters
+    # anlam taşırdı; artış kırmızı, azalış yeşil gösterilecek şekilde çeviriyoruz.
+    c2.metric("What-If proje süresi", f"{sonuc['yeni_sure']} gün", delta=f"{fark:+.1f} gün",
+              delta_color="inverse")
 
     girenler = set(sonuc["yeni_kritik"]) - set(sonuc["eski_kritik"])
     cikanlar = set(sonuc["eski_kritik"]) - set(sonuc["yeni_kritik"])
@@ -196,6 +220,10 @@ if "mc_sonuc" in st.session_state:
     df_mc = pd.DataFrame({"Proje bitiş günü": mc["sonuclar"]})
     fig_mc = px.histogram(df_mc, x="Proje bitiş günü", nbins=40,
                            title=f"{mc['iterasyon_sayisi']} iterasyonluk proje bitiş dağılımı")
+    # px.histogram'ın otomatik ürettiği Y ekseni etiketi ("count") labels=
+    # parametresiyle değişmiyor (Plotly bu sürümde iç adı farklı eşliyor);
+    # eksen başlığını doğrudan ayarlamak garanti çalışan minimum yol.
+    fig_mc.update_yaxes(title_text="Sayı")
     fig_mc.add_vline(x=mc["p50"], line_dash="dash", line_color="#4a7c59",
                       annotation_text="P50", annotation_position="top")
     fig_mc.add_vline(x=mc["p80"], line_dash="dash", line_color="#a66a1e",
@@ -270,11 +298,22 @@ st.divider()
 
 # --- EVM tablosu ---
 st.subheader(f"Kazanılmış değer (EVM) — gün {bugun} itibarıyla")
-df_evm = pd.DataFrame([{
-    "WBS": g.wbs_kodu, "İş paketi": g.isim,
-    "% Tamamlanma": g.tamamlanma_yuzdesi,
-    **g.performans_endeksleri(bugun)
-} for g in yapraklar if g.butce > 0])
+# CPI/SPI hesaplanamadığında (veri yok) performans_endeksleri() None döner —
+# bu, doğru ve dokunulmayan bir hesaplama sonucu. Ama tabloya ham "None" olarak
+# basılırsa kullanıcıya uygulama bozukmuş gibi görünür; burada SADECE gösterim
+# için "—" ile değiştiriyor ve CPI/SPI'yi sabit 2 ondalıkla biçimlendiriyoruz.
+df_evm_satirlari = []
+for g in yapraklar:
+    if g.butce > 0:
+        endeksler = g.performans_endeksleri(bugun)
+        df_evm_satirlari.append({
+            "WBS": g.wbs_kodu, "İş paketi": g.isim,
+            "% Tamamlanma": g.tamamlanma_yuzdesi,
+            "EV": endeksler["EV"], "PV": endeksler["PV"], "AC": endeksler["AC"],
+            "CPI": f"{endeksler['CPI']:.2f}" if endeksler["CPI"] is not None else "—",
+            "SPI": f"{endeksler['SPI']:.2f}" if endeksler["SPI"] is not None else "—",
+        })
+df_evm = pd.DataFrame(df_evm_satirlari)
 st.dataframe(df_evm, use_container_width=True, hide_index=True)
 
 st.divider()
@@ -339,14 +378,26 @@ with st.form("kontrol_noktasi_formu", clear_on_submit=True):
 if eklendi:
     ev = toplam_butce * (girilen_yuzde / 100)
     cpi = ev / girilen_ac if girilen_ac else None
-    eac = toplam_butce / cpi if cpi else toplam_butce
+    # cpi is None  -> henüz maliyet girilmedi (veri yok), EAC bütçeye eşitlenir.
+    # cpi == 0.0   -> harcama var ama kazanılan değer sıfır: bu performansla
+    #                 tamamlanma maliyeti matematiksel olarak tanımsızdır
+    #                 (BAC/CPI sonsuza gider). Sahte bir sayı (ör. bütçeyle
+    #                 aynı) üretmek yanıltıcı olur; bölme de yapılamayacağı
+    #                 için EAC 'hesaplanamıyor' anlamında None bırakılır.
+    # cpi > 0      -> normal EAC hesabı.
+    if cpi is None:
+        eac = toplam_butce
+    elif cpi == 0:
+        eac = None
+    else:
+        eac = toplam_butce / cpi
     st.session_state.kontrol_noktalari.append({
         "Gün": girilen_gun,
         "% Tamamlanma": girilen_yuzde,
         "AC": girilen_ac,
         "EV": round(ev, 0),
-        "CPI": round(cpi, 2) if cpi else None,
-        "EAC": round(eac, 0),
+        "CPI": round(cpi, 2) if cpi is not None else None,
+        "EAC": round(eac, 0) if eac is not None else None,
     })
     st.rerun()
 

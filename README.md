@@ -26,6 +26,14 @@ değil, somut ve incelenebilir bir eser olarak göstermek istedim. Bu proje, YBS
 kazandırdığı proje yönetimi teorisiyle, kendi kendime geliştirdiğim Python/OOP becerilerini
 birleştiren bir portföy çalışmasıdır.
 
+### Teknoloji Yığını
+
+- **Python 3.x**
+- **Streamlit** — arayüz
+- **pandas** — tablo/veri işleme
+- **Plotly** — interaktif grafikler (Gantt, histogram, risk matrisi, S-Curve)
+- **pytest** — otomatik test suite
+
 ### Uygulanan PMO Metodolojileri
 
 | Modül | Ne Yapar | Temel Formül/Mantık |
@@ -100,6 +108,26 @@ mevcut modüllerin tek başına göremediği bileşik durumları (ör. hem kriti
 riskli bir görev) yakalayabilir — ama nihai kararı (hangi eylemin seçileceğini) kasıtlı
 olarak insana bırakır.
 
+Somut bir örnek: CPM'in hesapladığı float (bolluk) değeri doğrudan Karar Destek Paneli'nin
+"Takvim" kartında, Risk Matrisi'nin risk skorları "Bileşik Risk" kartında, Monte Carlo'nun
+P50/P80/P90 çıktısı ise "Teslim Tarihi" kartında okunur. `karar_destek.py` bu sayıları asla
+yeniden hesaplamaz — sadece halihazırda hesaplanmış sonuçları birbirine karşı okuyup yorumlar.
+
+### Test Durumu
+
+Proje, `pytest` ile yazılmış **32 otomatik testle** kapsanıyor — CPM, PERT, EVM, Risk Matrisi,
+Kaynak Dengeleme, Critical Chain, Monte Carlo, What-If ve Karar Destek Sistemi'nin her biri
+için ayrı testler içeriyor (sıfır bütçe, eksik veri, küçük iterasyon sayısı gibi uç durumlar
+dahil).
+
+```bash
+pytest test_anka_suru.py -v
+```
+
+Şu an itibarıyla **32/32 test geçiyor.** `app.py` (Streamlit arayüzü) bu otomatik test setinin
+kapsamı dışında; hesaplama mantığının tamamı (`anka_suru_core.py`, `proje_verisi.py`,
+`karar_destek.py`) test kapsamındadır.
+
 ### Kurulum ve Çalıştırma
 
 ```bash
@@ -124,6 +152,21 @@ streamlit run app.py
   dayanıyor; hangi kararın hangi sayıya dayandığı her kartın gerekçesinde açıkça yazıyor
   (açıklanabilirlik).
 
+### Sınırlamalar / Kapsam Dışı
+
+Bu proje bir Primavera P6 veya MS Project alternatifi **değildir** — PMO'da kullanılan temel
+yöntemlerin matematiksel mantığını öğrenip çalışan bir sisteme dönüştürmek amacıyla hazırlanmış
+bir portföy/öğrenme projesidir. Bilinen sınırlar:
+
+- Proje verisi (WBS, süreler, bütçe, kaynaklar) kurgusal ve koda sabit olarak gömülü;
+  kullanıcı arayüzden kendi projesini yükleyemez.
+- Kaynak dengeleme, endüstriyel bir zamanlama motoru değil, basit ve açıklanabilir bir
+  sezgisel (heuristic) algoritmadır (float önceliğine dayalı serial schedule generation).
+- Karar Destek Sistemi kural tabanlıdır; makine öğrenmesi veya istatistiksel tahminleme
+  içermez.
+- Çoklu kullanıcı desteği, veritabanı ile veri kalıcılığı veya kimlik doğrulama gibi kurumsal
+  özellikler yoktur — tek oturumluk bir demo panelidir.
+
 ---
 
 ## 🇬🇧 English
@@ -146,6 +189,14 @@ companies (ASELSAN, TUSAŞ, HAVELSAN and similar), I wanted to demonstrate my kn
 just as a line on a CV, but as a concrete, reviewable body of work. This project combines
 the project management theory from my MIS education with Python/OOP skills I developed
 independently, as a portfolio piece.
+
+### Tech Stack
+
+- **Python 3.x**
+- **Streamlit** — UI
+- **pandas** — data/table handling
+- **Plotly** — interactive charts (Gantt, histograms, risk matrix, S-Curve)
+- **pytest** — automated test suite
 
 ### Implemented PMO Methodologies
 
@@ -192,6 +243,26 @@ compound conditions no single existing module could see on its own (e.g. a task 
 near-critical and high-risk) without ever touching the calculation engine — but it
 deliberately leaves the final choice of action to the human.
 
+A concrete example: the float (slack) computed by CPM is read directly by the Decision
+Support Panel's "Schedule" card, the Risk Matrix's risk scores by the "Combined Risk" card,
+and Monte Carlo's P50/P80/P90 output by the "Delivery Date" card. `karar_destek.py` never
+recomputes any of these numbers — it only reads and interprets results that already exist.
+
+### Test Status
+
+The project is covered by **32 automated tests** written with `pytest` — separate tests for
+CPM, PERT, EVM, the Risk Matrix, Resource Leveling, Critical Chain, Monte Carlo, What-If, and
+the Decision Support System (including edge cases: zero budget, missing data, small iteration
+counts).
+
+```bash
+pytest test_anka_suru.py -v
+```
+
+**32/32 tests currently pass.** `app.py` (the Streamlit UI) is outside the scope of this
+automated test set; the calculation logic in full (`anka_suru_core.py`, `proje_verisi.py`,
+`karar_destek.py`) is covered.
+
 ### Setup & Run
 
 ```bash
@@ -214,6 +285,21 @@ streamlit run app.py
   decision card is driven by threshold-based rules and cross-module intersection analysis;
   each card's rationale explicitly states which number it's based on (explainability).
 
+### Limitations / Out of Scope
+
+This project is **not** a Primavera P6 or MS Project alternative — it is a portfolio/learning
+project built to understand core PMO methodologies well enough to turn their logic into a
+working system. Known limitations:
+
+- Project data (WBS, durations, budget, resources) is fictional and hard-coded; users cannot
+  load their own project through the UI.
+- Resource leveling is a simple, explainable heuristic (float-priority serial schedule
+  generation), not an industrial-grade scheduling engine.
+- The Decision Support System is rule-based; it does not use machine learning or statistical
+  forecasting.
+- There is no multi-user support, database persistence, or authentication — this is a
+  single-session demo dashboard.
+
 ---
 
 ### Proje Yapısı / Project Structure
@@ -229,7 +315,12 @@ anka-suru/
 │   ├── genel_bakis.png
 │   ├── gantt_semasi.png
 │   ├── evm_eac_trend.png
-│   └── risk_matrisi.png
+│   ├── risk_matrisi.png
+│   ├── what_if.png
+│   ├── monte_carlo.png
+│   ├── s_curve.png
+│   ├── critical_chain.png
+│   └── karar_destek.png
 └── README.md
 ```
 
