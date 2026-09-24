@@ -28,7 +28,7 @@ birleştiren bir portföy çalışmasıdır.
 
 ### Teknoloji Yığını
 
-- **Python 3.x**
+- **Python 3.12**
 - **Streamlit** — arayüz
 - **pandas** — tablo/veri işleme
 - **Plotly** — interaktif grafikler (Gantt, histogram, risk matrisi, S-Curve)
@@ -192,7 +192,7 @@ independently, as a portfolio piece.
 
 ### Tech Stack
 
-- **Python 3.x**
+- **Python 3.12**
 - **Streamlit** — UI
 - **pandas** — data/table handling
 - **Plotly** — interactive charts (Gantt, histograms, risk matrix, S-Curve)
